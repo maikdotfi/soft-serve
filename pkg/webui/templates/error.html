@@ -1,0 +1,14 @@
+{{define "page"}}
+<section class="errorpage">
+  <pre class="errorpage__ascii">
+  ┌──────────────────────────────────────┐
+  │ ✗ ERR  {{printf "%-30s" .Code}} │
+  └──────────────────────────────────────┘
+  </pre>
+  <h1 class="errorpage__title">{{.Title}}</h1>
+  <p class="errorpage__detail">// {{.Detail}}</p>
+  <a class="errorpage__back" href="{{.BasePath}}/"
+     hx-get="{{.BasePath}}/" hx-target="#content" hx-select="#content > *"
+     hx-swap="innerHTML" hx-push-url="true" hx-indicator="#net-indicator">↩ return to index</a>
+</section>
+{{end}}

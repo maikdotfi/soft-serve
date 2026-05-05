@@ -1,0 +1,37 @@
+{{define "page"}}
+{{template "_repoheader" .}}
+
+<div class="split">
+  <aside class="panel panel--tree">
+    <div class="panel__title">
+      <span class="panel__lead">[ tree ]</span>
+      <span class="panel__path">/{{.Dir}}</span>
+    </div>
+    {{template "_treelist" .}}
+  </aside>
+
+  <section class="panel panel--main">
+    <div class="panel__title">
+      <span class="panel__lead">[ file ]</span>
+      <span class="panel__path">{{.Path}}</span>
+      <span class="panel__meta">
+        <span class="tag tag--time">{{humansize .Blob.Size}}</span>
+        {{if .Blob.IsBinary}}<span class="tag tag--warn">binary</span>{{end}}
+        {{if .Blob.Truncated}}<span class="tag tag--warn">truncated</span>{{end}}
+      </span>
+    </div>
+
+    {{if .Blob.IsBinary}}
+      <div class="binary">
+        <pre>// binary file ({{humansize .Blob.Size}})
+// preview suppressed
+// :::::::::::::::::::::</pre>
+      </div>
+    {{else}}
+      <div class="codewrap">
+        <pre class="code"><code>{{linenumbered .Blob.Content}}</code></pre>
+      </div>
+    {{end}}
+  </section>
+</div>
+{{end}}

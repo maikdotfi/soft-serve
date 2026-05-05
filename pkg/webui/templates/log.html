@@ -1,0 +1,27 @@
+{{define "page"}}
+{{template "_repoheader" .}}
+
+<section class="panel panel--full">
+  <div class="panel__title">
+    <span class="panel__lead">[ commit log ]</span>
+    <span class="panel__path">{{.Ref}}</span>
+  </div>
+  <ol class="loglist">
+    {{range .Commits}}
+      <li class="logrow">
+        <div class="logrow__head">
+          <span class="logrow__hash">{{shorthash .Hash}}</span>
+          <span class="logrow__subject">{{.Subject}}</span>
+        </div>
+        <div class="logrow__meta">
+          <span>by <strong>{{.Author}}</strong></span>
+          <span>&lt;{{.AuthorEmail}}&gt;</span>
+          <span class="dim">{{shortdate .When}}</span>
+        </div>
+      </li>
+    {{else}}
+      <li class="empty">// no commits</li>
+    {{end}}
+  </ol>
+</section>
+{{end}}

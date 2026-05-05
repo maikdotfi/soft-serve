@@ -18,6 +18,9 @@ func NewRouter(ctx context.Context) http.Handler {
 	// Health routes
 	HealthController(ctx, router)
 
+	// Read-only HTML browser at /ui
+	WebUIController(ctx, router)
+
 	// Git routes
 	GitController(ctx, router)
 

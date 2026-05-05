@@ -1,0 +1,41 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="same-origin">
+  <title>{{.Title}} :: soft-serve</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="{{.BasePath}}/static/style.css">
+  <script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
+</head>
+<body>
+  <div class="indicator" id="net-indicator" aria-hidden="true">
+    <span class="indicator__bar"><span class="indicator__shimmer"></span></span>
+  </div>
+
+  <header class="topbar" role="banner">
+    <a href="{{.BasePath}}/" class="brand">
+      <span class="brand__sigil">▓▒░</span>
+      <span class="brand__name">soft//serve</span>
+      <span class="brand__suffix">browser</span>
+    </a>
+    <nav class="topbar__statusline" aria-label="status">
+      <span class="status__cell">repos:<em>{{.RepoCount}}</em></span>
+      <span class="status__cell status__cell--clock"><span class="dot"></span>{{.Now}}</span>
+    </nav>
+  </header>
+
+  <main id="content" class="content">
+    {{template "page" .}}
+  </main>
+
+  <footer class="footer" role="contentinfo">
+    <div class="footer__row">
+      <span class="footer__cell">soft-serve · read-only browser</span>
+    </div>
+  </footer>
+</body>
+</html>{{end}}
