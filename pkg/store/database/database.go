@@ -22,6 +22,7 @@ type datastore struct {
 	*lfsStore
 	*accessTokenStore
 	*webhookStore
+	*backupStore
 }
 
 // New returns a new store.Store database.
@@ -41,6 +42,7 @@ func New(ctx context.Context, db *db.DB) store.Store {
 		collabStore:      &collabStore{},
 		lfsStore:         &lfsStore{},
 		accessTokenStore: &accessTokenStore{},
+		backupStore:      &backupStore{},
 	}
 
 	return s

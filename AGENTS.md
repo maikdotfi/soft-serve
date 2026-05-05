@@ -31,7 +31,6 @@ Operational rules:
 - One behavior per test. Prefer table-driven tests (`tests := []struct{...}`) when the behavior space is enumerable; one `t.Run` per case.
 - Test names describe behavior, not implementation: `TestRepo_Create_RejectsDuplicateName`, not `TestCreateFunc`.
 - Use `testing.T.Helper()` in test helpers. Use `t.Cleanup` over `defer` for resources owned by the test framework.
-- Prefer `testify/require` for fatal assertions and `testify/assert` for non-fatal — both are already in `go.mod`.
 - No network, no real filesystem outside `t.TempDir()`, no real clock in unit tests. All such dependencies go through ports (see below).
 - Integration tests that need Postgres or a real Git binary live alongside the unit tests but are gated by build tags or env (`SOFT_SERVE_DB_DRIVER=postgres`, see `.github/workflows/build.yml`). Mark them clearly and keep the unit suite hermetic.
 - A bug fix starts with a regression test that fails on `main` and passes after the fix. No exceptions.

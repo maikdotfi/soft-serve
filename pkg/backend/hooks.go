@@ -18,8 +18,33 @@ var _ hooks.Hooks = (*Backend)(nil)
 // PostReceive is called by the git post-receive hook.
 //
 // It implements Hooks.
-func (d *Backend) PostReceive(_ context.Context, _ io.Writer, _ io.Writer, repo string, args []hooks.HookArg) {
+func (d *Backend) PostReceive(ctx context.Context, _ io.Writer, _ io.Writer, repo string, args []hooks.HookArg) {
 	d.logger.Debug("post-receive hook called", "repo", repo, "args", args)
+
+	// Rule CreateRepoBackupOnPush: trigger backup when a push to the default branch is detected.
+	if d.backup != nil && d.backup.IsConfigured() {
+		// Determine the default branch for this repo
+		r, err := d.Repository(ctx, repo)
+		if err == nil {
+			defaultBranch := "main" // Soft Serve default
+			if rr, err := r.Open(); err == nil {
+				if head, err := rr.HEAD(); err == nil {
+					defaultBranch = head.Name().Short()
+				}
+			}
+
+			for _, arg := range args {
+				// A push to the default branch creates a backup.
+				// PushToDefaultBranch fires when refName matches the default branch.
+				if arg.RefName == "refs/heads/"+defaultBranch {
+					if err := d.backup.HandlePushToDefaultBranch(ctx, repo); err != nil {
+						d.logger.Error("failed to create repo backup on push", "repo", repo, "err", err)
+					}
+					break // Only need one backup per push
+				}
+			}
+		}
+	}
 }
 
 // PreReceive is called by the git pre-receive hook.

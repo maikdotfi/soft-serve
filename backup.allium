@@ -1,0 +1,421 @@
+-- allium: 3
+-- backup.allium
+
+-- Scope: S3 backup and restore for Soft Serve
+-- Includes: Repo backup (push-triggered and scheduled), Server snapshot (scheduled), Database backup (part of server snapshot), Full restore, Backup rotation
+-- Excludes: Secrets backup, S3-only storage mode, Partial or per-repo restore, Database WAL streaming, S3-specific features (lifecycle policies, versioning)
+-- Dependencies: Repo entity, Admin user, Default branch concept from core
+
+------------------------------------------------------------
+-- Given
+------------------------------------------------------------
+
+given {
+    schedule: BackupSchedule
+}
+
+------------------------------------------------------------
+-- External Entities
+------------------------------------------------------------
+
+external entity Repo {
+    name: String
+    default_branch: String
+}
+
+external entity User {
+    role: String
+}
+
+external entity S3Client {
+    endpoint: String
+}
+
+external entity GitServer {
+}
+
+------------------------------------------------------------
+-- Entities
+------------------------------------------------------------
+
+entity BackupSchedule {
+    next_run_at: Timestamp
+}
+
+entity RepoBackup {
+    repo: Repo
+    created_at: Timestamp
+    retry_count: Integer
+    status: uploading | stored | failed
+
+    transitions status {
+        uploading -> stored
+        uploading -> failed
+        terminal: stored, failed
+    }
+}
+
+entity ServerSnapshot {
+    created_at: Timestamp
+    retry_count: Integer
+    status: uploading | stored | failed
+
+    transitions status {
+        uploading -> stored
+        uploading -> failed
+        terminal: stored, failed
+    }
+}
+
+entity RestoreJob {
+    status: starting | restoring_server | restoring_repos | completed | failed
+
+    transitions status {
+        starting -> restoring_server
+        restoring_server -> restoring_repos
+        restoring_repos -> completed
+        starting -> failed
+        restoring_server -> failed
+        restoring_repos -> failed
+        terminal: completed, failed
+    }
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    s3_endpoint: String
+    s3_bucket: String
+    s3_region: String
+    s3_path_prefix: String = "soft-serve"
+    schedule_interval: Duration = 6.hours
+    max_repo_backups: Integer = 5
+    max_server_snapshots: Integer = 30
+    max_upload_retries: Integer = 3
+    upload_timeout: Duration = 1.hour
+    -- The timeout covers the entire upload lifecycle including retries.
+    -- A backup that hasn't completed within this time is marked failed.
+    backup_repos_on_schedule: Boolean = false
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+------------------------------------------------------------
+-- Repo backup: push-triggered
+------------------------------------------------------------
+
+rule CreateRepoBackupOnPush {
+    when: PushToDefaultBranch(repo)
+    ensures: RepoBackup.created(repo: repo, created_at: now, retry_count: 0, status: uploading)
+
+    @guidance
+        -- Triggered when a push completes on a repo's default branch.
+        -- The entire repository content is backed up as a git bundle,
+        -- not just the pushed ref.
+        -- Concurrency: multiple RepoBackups for the same repo may be uploading
+        -- simultaneously; this is acceptable if simpler to implement.
+}
+
+------------------------------------------------------------
+-- Repo backup: scheduled (for mirror repos or opt-in)
+------------------------------------------------------------
+
+rule CreateScheduledRepoBackups {
+    when: BackupScheduleFired()
+    requires: config.backup_repos_on_schedule = true
+    ensures:
+        for repo in Repos:
+            RepoBackup.created(repo: repo, created_at: now, retry_count: 0, status: uploading)
+}
+
+------------------------------------------------------------
+-- Server snapshot: scheduled
+------------------------------------------------------------
+
+rule CreateServerSnapshot {
+    when: BackupScheduleFired()
+    ensures:
+        ServerSnapshot.created(created_at: now, retry_count: 0, status: uploading)
+        schedule.next_run_at = now + config.schedule_interval
+}
+
+------------------------------------------------------------
+-- Schedule trigger
+------------------------------------------------------------
+
+rule FireBackupSchedule {
+    when: schedule: BackupSchedule.next_run_at <= now
+    ensures: BackupScheduleFired()
+}
+
+------------------------------------------------------------
+-- Upload outcomes
+------------------------------------------------------------
+
+rule RepoBackupUploadSucceeds {
+    when: RepoBackupUploadSucceeded(backup)
+    requires: backup.status = uploading
+    ensures: backup.status = stored
+}
+
+rule RepoBackupUploadFails {
+    when: RepoBackupUploadFailed(backup)
+    requires: backup.status = uploading
+    ensures:
+        if backup.retry_count < config.max_upload_retries:
+            backup.retry_count = backup.retry_count + 1
+        else:
+            backup.status = failed
+
+    @guidance
+        -- Retries use exponential backoff between attempts.
+        -- While retrying, the backup stays in 'uploading' status
+        -- and the retry_count tracks how many attempts have failed.
+        -- Once max retries are exhausted, the backup is marked failed.
+        -- Failed backups are not retried further; the next push or
+        -- scheduled run will create a fresh backup attempt.
+        -- Failure events should be logged for admin visibility.
+        --
+        -- Note: retry_count tracks failed upload attempts, not successes.
+        -- With max_upload_retries=3, the total attempts are
+        -- 1 initial + 3 retries = 4 attempts before giving up.
+}
+
+rule ServerSnapshotUploadSucceeds {
+    when: ServerSnapshotUploadSucceeded(snapshot)
+    requires: snapshot.status = uploading
+    ensures: snapshot.status = stored
+}
+
+rule ServerSnapshotUploadFails {
+    when: ServerSnapshotUploadFailed(snapshot)
+    requires: snapshot.status = uploading
+    ensures:
+        if snapshot.retry_count < config.max_upload_retries:
+            snapshot.retry_count = snapshot.retry_count + 1
+        else:
+            snapshot.status = failed
+
+    @guidance
+        -- Same retry strategy as RepoBackup: exponential backoff.
+        -- If all retries exhausted, the snapshot is marked failed
+        -- and the next scheduled run will create a fresh attempt.
+        -- Failure events should be logged for admin visibility.
+}
+
+------------------------------------------------------------
+-- Rotation
+------------------------------------------------------------
+
+rule RotateRepoBackups {
+    when: backup: RepoBackup.status becomes stored
+    ensures:
+        for old in BackupsToRotate(backup.repo):
+            not exists old
+
+    @guidance
+        -- BackupsToRotate returns stored RepoBackups for the same repo
+        -- where the total stored count exceeds max_repo_backups,
+        -- ordered by created_at ascending (oldest first).
+        -- Only the surplus beyond the limit is removed.
+        --
+        -- Deleting a repo from Soft Serve does NOT remove its backups from S3.
+        -- Backups for deleted repos remain in S3 for potential manual recovery.
+        -- They are excluded from rotation (no new pushes means no rotation trigger)
+        -- but also not counted against other repos' limits.
+}
+
+rule RotateServerSnapshots {
+    when: snapshot: ServerSnapshot.status becomes stored
+    ensures:
+        for old in SnapshotsToRotate():
+            not exists old
+
+    @guidance
+        -- Same logic as RepoBackups but for ServerSnapshots,
+        -- using max_server_snapshots as the limit.
+}
+
+rule RepoBackupUploadTimeout {
+    when: backup: RepoBackup.created_at + config.upload_timeout <= now
+    requires: backup.status = uploading
+    ensures: backup.status = failed
+
+    @guidance
+        -- If a backup has been uploading for longer than the configured timeout,
+        -- mark it as failed. This catches cases where S3 is completely
+        -- unresponsive and neither UploadSucceeded nor UploadFailed fires.
+        -- The next push or scheduled run will create a fresh backup attempt.
+}
+
+rule ServerSnapshotUploadTimeout {
+    when: snapshot: ServerSnapshot.created_at + config.upload_timeout <= now
+    requires: snapshot.status = uploading
+    ensures: snapshot.status = failed
+
+    @guidance
+        -- Same timeout logic as RepoBackup.
+}
+
+------------------------------------------------------------
+-- Restore
+------------------------------------------------------------
+
+rule StartRestore {
+    when: AdminRequestsRestore(admin)
+    ensures: RestoreJob.created(status: starting)
+    @guidance
+        -- Admin triggers a full restore via a subcommand (e.g., soft restore).
+        -- The server must be able to reach the S3 bucket where backups are stored.
+}
+
+rule BeginServerRestore {
+    when: job: RestoreJob.status becomes starting
+    ensures: job.status = restoring_server
+    @guidance
+        -- Auto-transitions immediately: once a RestoreJob is created,
+        -- server data restore begins right away.
+}
+
+rule ServerDataRestored {
+    when: ServerSnapshotRestored(job)
+    requires: job.status = restoring_server
+    ensures: job.status = restoring_repos
+    @guidance
+        -- The server snapshot (database, config, SSH host keys, public keys)
+        -- has been restored from S3. This stage is atomic.
+        -- On failure, RestoreJob stays in restoring_server and can be retried.
+}
+
+rule AllReposRestored {
+    when: RepoRestoresComplete(job)
+    requires: job.status = restoring_repos
+    ensures: job.status = completed
+    @guidance
+        -- Each repo is restored from its most recent stored RepoBackup.
+        -- Repos are restored one at a time; each repo restore is atomic.
+        -- On failure, the restore process can be re-attempted from the last
+        -- successfully restored repo. The implementation should check local
+        -- state (filesystem, database) to determine what has already been
+        -- restored rather than relying on RestoreJob state.
+        --
+        -- Restore of each stage is idempotent: re-restoring server data
+        -- or individual repos is safe and produces the same result.
+        -- This matters because a new RestoreJob will re-traverse all stages.
+}
+
+rule RestoreFailedFromStarting {
+    when: RestoreFailed(job)
+    requires: job.status = starting
+    ensures: job.status = failed
+}
+
+rule RestoreFailedFromServerRestore {
+    when: RestoreFailed(job)
+    requires: job.status = restoring_server
+    ensures: job.status = failed
+    @guidance
+        -- Server data restore failed. Create a new RestoreJob to retry;
+        -- the implementation should detect and skip already-restored state,
+        -- making the retry effectively resume from the server data stage.
+}
+
+rule RestoreFailedFromRepoRestore {
+    when: RestoreFailed(job)
+    requires: job.status = restoring_repos
+    ensures: job.status = failed
+    @guidance
+        -- Repo restore failed partway through. Already-restored repos
+        -- remain in place. Create a new RestoreJob to retry; the
+        -- implementation detects already-restored repos and resumes
+        -- from the first unrestored one.
+}
+
+------------------------------------------------------------
+-- Defaults
+------------------------------------------------------------
+
+default BackupSchedule main = { next_run_at: now + config.schedule_interval }
+
+------------------------------------------------------------
+-- Invariants
+------------------------------------------------------------
+
+invariant MaxRepoBackupsPerRepo {
+    for r in Repos:
+        (RepoBackups where repo = r and status = stored).count <= config.max_repo_backups
+}
+
+invariant MaxServerSnaphots {
+    (ServerSnapshots where status = stored).count <= config.max_server_snapshots
+}
+
+------------------------------------------------------------
+-- Actor Declarations
+------------------------------------------------------------
+
+actor Admin {
+    identified_by: User where role = admin
+}
+
+------------------------------------------------------------
+-- Surfaces
+------------------------------------------------------------
+
+surface AdminBackupManagement {
+    facing admin: Admin
+
+    exposes:
+        RepoBackups where status = stored
+        ServerSnapshots where status = stored
+        RestoreJobs where status != completed
+
+    provides:
+        AdminRequestsRestore(admin)
+}
+
+surface S3UploadAdapter {
+    facing s3: S3Client
+
+    provides:
+        RepoBackupUploadSucceeded(backup)
+        RepoBackupUploadFailed(backup)
+        ServerSnapshotUploadSucceeded(snapshot)
+        ServerSnapshotUploadFailed(snapshot)
+}
+
+surface S3DownloadAdapter {
+    facing s3: S3Client
+
+    provides:
+        ServerSnapshotRestored(job)
+        RepoRestoresComplete(job)
+        RestoreFailed(job)
+}
+
+surface GitPushNotification {
+    facing git: GitServer
+
+    provides:
+        PushToDefaultBranch(repo)
+}
+
+------------------------------------------------------------
+-- Resolved Decisions
+------------------------------------------------------------
+
+-- S3 credentials are provided via environment variables, consistent with
+-- the Soft Serve pattern of SOFT_SERVE_* env vars.
+-- Backup format uses git bundle (git bundle create), which captures the
+-- full repository content in a single file and can be restored with
+-- git clone --bundle or git bundle unbundle.
+
+------------------------------------------------------------
+-- Open Questions
+------------------------------------------------------------
+
+-- (None remaining)
