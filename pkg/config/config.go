@@ -139,6 +139,50 @@ type JobsConfig struct {
 	MirrorPull string `env:"MIRROR_PULL" yaml:"mirror_pull"`
 }
 
+// BackupConfig is the configuration for S3 backup and restore.
+// Corresponds to the config block in backup.allium.
+type S3BackupConfig struct {
+	// Enabled controls whether S3 backup is active.
+	Enabled bool `env:"ENABLED" yaml:"enabled"`
+
+	// S3Endpoint is the S3-compatible endpoint URL.
+	S3Endpoint string `env:"ENDPOINT" yaml:"endpoint"`
+
+	// S3Bucket is the S3 bucket name.
+	S3Bucket string `env:"BUCKET" yaml:"bucket"`
+
+	// S3Region is the S3 region.
+	S3Region string `env:"REGION" yaml:"region"`
+
+	// S3PathPrefix is the key prefix within the bucket.
+	S3PathPrefix string `env:"PATH_PREFIX" yaml:"path_prefix"`
+
+	// S3AccessKey is the access key ID.
+	S3AccessKey string `env:"ACCESS_KEY" yaml:"-"`
+
+	// S3SecretKey is the secret access key.
+	S3SecretKey string `env:"SECRET_KEY" yaml:"-"`
+
+	// ScheduleInterval is how often the backup schedule fires.
+	ScheduleInterval string `env:"SCHEDULE_INTERVAL" yaml:"schedule_interval"`
+
+	// MaxRepoBackups is the maximum number of stored backups per repo.
+	MaxRepoBackups int `env:"MAX_REPO_BACKUPS" yaml:"max_repo_backups"`
+
+	// MaxServerSnapshots is the maximum number of stored server snapshots.
+	MaxServerSnapshots int `env:"MAX_SERVER_SNAPSHOTS" yaml:"max_server_snapshots"`
+
+	// MaxUploadRetries is the maximum number of upload retries.
+	MaxUploadRetries int `env:"MAX_UPLOAD_RETRIES" yaml:"max_upload_retries"`
+
+	// UploadTimeout is the maximum time an upload can take before being marked
+	// failed. Parsed as a Go duration (e.g. "1h", "30m").
+	UploadTimeout string `env:"UPLOAD_TIMEOUT" yaml:"upload_timeout"`
+
+	// BackupReposOnSchedule controls whether repos are backed up on schedule.
+	BackupReposOnSchedule bool `env:"BACKUP_REPOS_ON_SCHEDULE" yaml:"backup_repos_on_schedule"`
+}
+
 // Config is the configuration for Soft Serve.
 type Config struct {
 	// Name is the name of the server.
@@ -167,6 +211,9 @@ type Config struct {
 
 	// Jobs is the configuration for cron jobs
 	Jobs JobsConfig `envPrefix:"JOBS_" yaml:"jobs"`
+
+	// Backup is the configuration for S3 backup and restore.
+	Backup S3BackupConfig `envPrefix:"BACKUP_" yaml:"backup"`
 
 	// InitialAdminKeys is a list of public keys that will be added to the list of admins.
 	InitialAdminKeys []string `env:"INITIAL_ADMIN_KEYS" envSeparator:"\n" yaml:"initial_admin_keys"`
@@ -220,6 +267,19 @@ func (c *Config) Environ() []string {
 		fmt.Sprintf("SOFT_SERVE_LFS_ENABLED=%t", c.LFS.Enabled),
 		fmt.Sprintf("SOFT_SERVE_LFS_SSH_ENABLED=%t", c.LFS.SSHEnabled),
 		fmt.Sprintf("SOFT_SERVE_JOBS_MIRROR_PULL=%s", c.Jobs.MirrorPull),
+		fmt.Sprintf("SOFT_SERVE_BACKUP_ENABLED=%t", c.Backup.Enabled),
+		fmt.Sprintf("SOFT_SERVE_BACKUP_ENDPOINT=%s", c.Backup.S3Endpoint),
+		fmt.Sprintf("SOFT_SERVE_BACKUP_BUCKET=%s", c.Backup.S3Bucket),
+		fmt.Sprintf("SOFT_SERVE_BACKUP_REGION=%s", c.Backup.S3Region),
+		fmt.Sprintf("SOFT_SERVE_BACKUP_PATH_PREFIX=%s", c.Backup.S3PathPrefix),
+		fmt.Sprintf("SOFT_SERVE_BACKUP_ACCESS_KEY=%s", c.Backup.S3AccessKey),
+		fmt.Sprintf("SOFT_SERVE_BACKUP_SECRET_KEY=%s", c.Backup.S3SecretKey),
+		fmt.Sprintf("SOFT_SERVE_BACKUP_SCHEDULE_INTERVAL=%s", c.Backup.ScheduleInterval),
+		fmt.Sprintf("SOFT_SERVE_BACKUP_MAX_REPO_BACKUPS=%d", c.Backup.MaxRepoBackups),
+		fmt.Sprintf("SOFT_SERVE_BACKUP_MAX_SERVER_SNAPSHOTS=%d", c.Backup.MaxServerSnapshots),
+		fmt.Sprintf("SOFT_SERVE_BACKUP_MAX_UPLOAD_RETRIES=%d", c.Backup.MaxUploadRetries),
+		fmt.Sprintf("SOFT_SERVE_BACKUP_UPLOAD_TIMEOUT=%s", c.Backup.UploadTimeout),
+		fmt.Sprintf("SOFT_SERVE_BACKUP_BACKUP_REPOS_ON_SCHEDULE=%t", c.Backup.BackupReposOnSchedule),
 	}...)
 
 	return envs
@@ -236,6 +296,84 @@ func IsDebug() bool {
 func IsVerbose() bool {
 	verbose, _ := strconv.ParseBool(os.Getenv("SOFT_SERVE_VERBOSE"))
 	return IsDebug() && verbose
+}
+
+// DefaultS3BackupConfig returns the default S3 backup configuration.
+func DefaultS3BackupConfig() S3BackupConfig {
+	return S3BackupConfig{
+		Enabled:            false,
+		S3PathPrefix:       "soft-serve",
+		ScheduleInterval:   "6h",
+		MaxRepoBackups:     5,
+		MaxServerSnapshots: 30,
+		MaxUploadRetries:   3,
+		UploadTimeout:     "1h",
+		BackupReposOnSchedule: false,
+	}
+}
+
+// Duration parses the ScheduleInterval as a time.Duration.
+func (c S3BackupConfig) ScheduleIntervalDuration() (time.Duration, error) {
+	return parseDuration(c.ScheduleInterval)
+}
+
+// UploadTimeoutDuration parses the UploadTimeout as a time.Duration.
+func (c S3BackupConfig) UploadTimeoutDuration() (time.Duration, error) {
+	return parseDuration(c.UploadTimeout)
+}
+
+// parseDuration parses a duration string that may use Go duration syntax
+// (e.g. "1h", "30m") or a simple integer-in-seconds string.
+func parseDuration(s string) (time.Duration, error) {
+	if d, err := time.ParseDuration(s); err == nil {
+		return d, nil
+	}
+	// Try as seconds
+	if secs, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return time.Duration(secs) * time.Second, nil
+	}
+	return 0, fmt.Errorf("invalid duration: %q", s)
+}
+
+// ConvertBackupConfig converts an S3BackupConfig from the server config
+// into the domain backup.BackupConfig. This lives in the config package
+// to avoid import cycles — the domain backup package must not import config.
+func ConvertBackupConfig(c S3BackupConfig) (BackupConfigResult, error) {
+	scheduleInterval, err := c.ScheduleIntervalDuration()
+	if err != nil {
+		return BackupConfigResult{}, fmt.Errorf("parsing backup schedule_interval: %w", err)
+	}
+	uploadTimeout, err := c.UploadTimeoutDuration()
+	if err != nil {
+		return BackupConfigResult{}, fmt.Errorf("parsing backup upload_timeout: %w", err)
+	}
+	return BackupConfigResult{
+		S3Endpoint:           c.S3Endpoint,
+		S3Bucket:             c.S3Bucket,
+		S3Region:             c.S3Region,
+		S3PathPrefix:          c.S3PathPrefix,
+		ScheduleInterval:     scheduleInterval,
+		MaxRepoBackups:       c.MaxRepoBackups,
+		MaxServerSnapshots:   c.MaxServerSnapshots,
+		MaxUploadRetries:     c.MaxUploadRetries,
+		UploadTimeout:        uploadTimeout,
+		BackupReposOnSchedule: c.BackupReposOnSchedule,
+	}, nil
+}
+
+// BackupConfigResult holds the parsed backup configuration values.
+// This avoids the need to import the domain backup package.
+type BackupConfigResult struct {
+	S3Endpoint           string
+	S3Bucket             string
+	S3Region             string
+	S3PathPrefix          string
+	ScheduleInterval     time.Duration
+	MaxRepoBackups       int
+	MaxServerSnapshots    int
+	MaxUploadRetries      int
+	UploadTimeout         time.Duration
+	BackupReposOnSchedule bool
 }
 
 // parseFile parses the given file as a configuration file.
@@ -396,6 +534,7 @@ func DefaultConfig() *Config {
 		Jobs: JobsConfig{
 			MirrorPull: "@every 10m",
 		},
+		Backup: DefaultS3BackupConfig(),
 	}
 }
 
@@ -444,6 +583,14 @@ func (c *Config) Validate() error {
 	c.InitialAdminKeys = pks
 
 	c.HTTP.CORS.AllowedOrigins = append([]string{c.HTTP.PublicURL}, c.HTTP.CORS.AllowedOrigins...)
+
+	// S3 backup access/secret keys from environment (never stored in config file)
+	if c.Backup.S3AccessKey == "" {
+		c.Backup.S3AccessKey = os.Getenv("SOFT_SERVE_BACKUP_ACCESS_KEY")
+	}
+	if c.Backup.S3SecretKey == "" {
+		c.Backup.S3SecretKey = os.Getenv("SOFT_SERVE_BACKUP_SECRET_KEY")
+	}
 
 	return nil
 }

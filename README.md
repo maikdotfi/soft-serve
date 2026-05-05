@@ -131,7 +131,12 @@ Check out [Systemd][systemd] on how to run Soft Serve as a service using
 Systemd. Soft Serve packages in our Apt/Yum repositories come with Systemd
 service units.
 
+Soft Serve can also back up your repositories and server data to any
+S3-compatible object store. See [S3 Backup and Restore][backup] for
+configuration and usage instructions.
+
 [systemd]: https://github.com/charmbracelet/soft-serve/blob/main/systemd.md
+[backup]: https://github.com/charmbracelet/soft-serve/blob/main/BACKUP.md
 
 ### Server Configuration
 
