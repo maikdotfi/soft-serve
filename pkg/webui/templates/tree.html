@@ -1,0 +1,54 @@
+{{define "page"}}
+{{template "_repoheader" .}}
+
+<div class="split">
+  <aside class="panel panel--tree">
+    <div class="panel__title">
+      <span class="panel__lead">[ tree ]</span>
+      <span class="panel__path">/{{.Path}}</span>
+    </div>
+    {{template "_treelist" .}}
+  </aside>
+
+  <section class="panel panel--main">
+    <div class="panel__title">
+      <span class="panel__lead">[ directory ]</span>
+      <span class="panel__path">{{or .Path "/"}}</span>
+    </div>
+    <div class="dirlisting">
+      <table class="dirtable">
+        <thead>
+          <tr><th>name</th><th>size</th><th>mode</th></tr>
+        </thead>
+        <tbody>
+        {{range .Tree}}
+          <tr>
+            <td>
+              {{if eq .Kind 0}}
+                <a class="link link--dir" href="{{$.BasePath}}/r/{{$.Repo.Name}}/tree/{{$.Ref}}/{{.Path}}"
+                   hx-get="{{$.BasePath}}/r/{{$.Repo.Name}}/tree/{{$.Ref}}/{{.Path}}"
+                   hx-target="#content" hx-select="#content > *" hx-swap="innerHTML"
+                   hx-push-url="true" hx-indicator="#net-indicator">
+                  ▣ {{.Name}}/
+                </a>
+              {{else}}
+                <a class="link link--file" href="{{$.BasePath}}/r/{{$.Repo.Name}}/blob/{{$.Ref}}/{{.Path}}"
+                   hx-get="{{$.BasePath}}/r/{{$.Repo.Name}}/blob/{{$.Ref}}/{{.Path}}"
+                   hx-target="#content" hx-select="#content > *" hx-swap="innerHTML"
+                   hx-push-url="true" hx-indicator="#net-indicator">
+                  › {{.Name}}
+                </a>
+              {{end}}
+            </td>
+            <td class="dim">{{if eq .Kind 1}}{{humansize .Size}}{{else}}—{{end}}</td>
+            <td class="dim">{{.Mode}}</td>
+          </tr>
+        {{else}}
+          <tr><td colspan="3"><div class="empty">// empty directory</div></td></tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+{{end}}

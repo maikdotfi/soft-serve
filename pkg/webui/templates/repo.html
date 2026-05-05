@@ -1,0 +1,102 @@
+{{define "page"}}
+{{template "_repoheader" .}}
+
+<div class="split">
+  <aside class="panel panel--tree">
+    <div class="panel__title">
+      <span class="panel__lead">[ tree ]</span>
+      <span class="panel__path">/{{.Path}}</span>
+    </div>
+    {{template "_treelist" .}}
+  </aside>
+
+  <section class="panel panel--main">
+    <div class="panel__title">
+      <span class="panel__lead">[ recent commits ]</span>
+      <a class="panel__more" href="{{.BasePath}}/r/{{.Repo.Name}}/log/{{.Ref}}"
+         hx-get="{{.BasePath}}/r/{{.Repo.Name}}/log/{{.Ref}}"
+         hx-target="#content" hx-select="#content > *" hx-swap="innerHTML"
+         hx-push-url="true" hx-indicator="#net-indicator">all log →</a>
+    </div>
+    {{template "_commitlist" .}}
+  </section>
+</div>
+{{end}}
+
+{{define "_repoheader"}}
+<header class="repohead">
+  <div class="breadcrumb">
+    <a href="{{.BasePath}}/"
+       hx-get="{{.BasePath}}/" hx-target="#content" hx-select="#content > *"
+       hx-swap="innerHTML" hx-push-url="true" hx-indicator="#net-indicator">
+       <span class="kbd">..</span> <span class="dim">/</span> repos</a>
+    <span class="dim">/</span>
+    <span class="breadcrumb__current">{{.Repo.Name}}</span>
+    {{if .Path}}
+      <span class="dim">/</span>
+      <span class="breadcrumb__path">{{.Path}}</span>
+    {{end}}
+  </div>
+
+  <div class="repohead__name">
+    <h1>{{.Repo.Name}}</h1>
+    <span class="tag tag--branch">{{.Ref}}</span>
+  </div>
+  {{if .Repo.Description}}<p class="repohead__desc">{{.Repo.Description}}</p>{{end}}
+  <div class="repohead__meta">
+    <span class="metaitem"><span class="metaitem__k">project</span><span class="metaitem__v">{{or .Repo.ProjectName "—"}}</span></span>
+    <span class="metaitem"><span class="metaitem__k">updated</span><span class="metaitem__v">{{shortdate .Repo.UpdatedAt}}</span></span>
+    <span class="metaitem"><span class="metaitem__k">default</span><span class="metaitem__v">{{or .Repo.DefaultBranch "HEAD"}}</span></span>
+    <span class="metaitem"><span class="metaitem__k">mode</span><span class="metaitem__v">read-only</span></span>
+  </div>
+</header>
+{{end}}
+
+{{define "_treelist"}}
+{{if .ParentPath}}
+  <a class="row row--up" href="{{.BasePath}}/r/{{.Repo.Name}}/tree/{{.Ref}}/{{.ParentPath}}"
+     hx-get="{{.BasePath}}/r/{{.Repo.Name}}/tree/{{.Ref}}/{{.ParentPath}}"
+     hx-target="#content" hx-select="#content > *" hx-swap="innerHTML"
+     hx-push-url="true" hx-indicator="#net-indicator">
+    <span class="row__icon">..</span><span class="row__name">parent directory</span>
+  </a>
+{{end}}
+{{range $i, $e := .Tree}}
+  {{if eq $e.Kind 0}}
+    <a class="row row--dir" style="--i:{{$i}}"
+       href="{{$.BasePath}}/r/{{$.Repo.Name}}/tree/{{$.Ref}}/{{$e.Path}}"
+       hx-get="{{$.BasePath}}/r/{{$.Repo.Name}}/tree/{{$.Ref}}/{{$e.Path}}"
+       hx-target="#content" hx-select="#content > *" hx-swap="innerHTML"
+       hx-push-url="true" hx-indicator="#net-indicator">
+      <span class="row__icon">▣</span><span class="row__name">{{$e.Name}}/</span>
+    </a>
+  {{else}}
+    <a class="row row--file" style="--i:{{$i}}"
+       href="{{$.BasePath}}/r/{{$.Repo.Name}}/blob/{{$.Ref}}/{{$e.Path}}"
+       hx-get="{{$.BasePath}}/r/{{$.Repo.Name}}/blob/{{$.Ref}}/{{$e.Path}}"
+       hx-target="#content" hx-select="#content > *" hx-swap="innerHTML"
+       hx-push-url="true" hx-indicator="#net-indicator">
+      <span class="row__icon">›</span>
+      <span class="row__name">{{$e.Name}}</span>
+      <span class="row__meta">{{humansize $e.Size}}</span>
+    </a>
+  {{end}}
+{{else}}
+  <div class="empty">// empty tree</div>
+{{end}}
+{{end}}
+
+{{define "_commitlist"}}
+<ul class="commitlist">
+  {{range .Commits}}
+    <li class="commit">
+      <span class="commit__hash">{{shorthash .Hash}}</span>
+      <span class="commit__subject">{{.Subject}}</span>
+      <span class="commit__author">{{.Author}}</span>
+      <span class="commit__time">{{shortdate .When}}</span>
+    </li>
+  {{else}}
+    <li class="empty">// no commits</li>
+  {{end}}
+</ul>
+{{end}}

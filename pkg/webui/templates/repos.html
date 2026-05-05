@@ -1,0 +1,34 @@
+{{define "page"}}
+<section class="hero">
+  <h1 class="hero__title">Repositories</h1>
+  <p class="hero__sub">
+    <span class="kbd">$</span> ls /var/git
+    <span class="hero__meta">— {{len .Repos}} indexed</span>
+  </p>
+</section>
+
+<section class="repolist" role="list">
+  {{range $i, $r := .Repos}}
+  <a class="repocard" role="listitem" href="{{$.BasePath}}/r/{{$r.Name}}"
+     hx-get="{{$.BasePath}}/r/{{$r.Name}}"
+     hx-target="#content" hx-select="#content > *" hx-swap="innerHTML"
+     hx-push-url="true" hx-indicator="#net-indicator">
+    <div class="repocard__head">
+      <span class="repocard__index">{{printf "%03d" (add $i 1)}}</span>
+      <span class="repocard__name">{{$r.Name}}</span>
+      {{if $r.ProjectName}}<span class="repocard__project">{{$r.ProjectName}}</span>{{end}}
+    </div>
+    <div class="repocard__desc">
+      {{if $r.Description}}{{$r.Description}}{{else}}<span class="dim">no description</span>{{end}}
+    </div>
+    <div class="repocard__foot">
+      <span class="tag tag--branch">{{or $r.DefaultBranch "HEAD"}}</span>
+      <span class="tag tag--time">{{shortdate $r.UpdatedAt}}</span>
+      <span class="repocard__arrow" aria-hidden="true">→</span>
+    </div>
+  </a>
+  {{else}}
+  <div class="empty">no repositories indexed</div>
+  {{end}}
+</section>
+{{end}}
