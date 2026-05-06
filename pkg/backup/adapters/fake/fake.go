@@ -187,6 +187,29 @@ type FakeBackupStore struct {
 	snapshots  map[int64]*backup.ServerSnapshot
 	restoreJobs map[int64]*backup.RestoreJob
 	nextID     int64
+
+	// Error injection for testing error paths
+	CreateRepoBackupErr     error
+	UpdateRepoBackupErr     error
+	CreateServerSnapshotErr error
+	UpdateServerSnapshotErr error
+	CreateRestoreJobErr     error
+	UpdateRestoreJobErr     error
+	GetBackupScheduleErr    error
+	SetScheduleErr          error
+	ListRepoBackupsErr      error
+	ListSnapshotsErr        error
+	ListRestoreJobsErr      error
+	MarkRepoBackupsTimedOutErr error
+	MarkSnapshotsTimedOutErr   error
+	DeleteRepoBackupErr     error
+	DeleteSnapshotErr       error
+
+	// UpdateRestoreNonFailedErr returns an error from UpdateRestoreJobStatus
+	// only when the target status is NOT "failed". This lets tests simulate
+	// a failure in beginServerRestore (starting -> restoring_server) while
+	// still allowing the cleanup path (starting -> failed).
+	UpdateRestoreNonFailedErr error
 }
 
 // NewFakeBackupStore creates a new FakeBackupStore.
@@ -209,6 +232,9 @@ func (f *FakeBackupStore) allocID() int64 {
 func (f *FakeBackupStore) GetBackupSchedule(_ context.Context) (*backup.BackupSchedule, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
+	if f.GetBackupScheduleErr != nil {
+		return nil, f.GetBackupScheduleErr
+	}
 	if f.schedule == nil {
 		return nil, backup.ErrBackupNotFound
 	}
@@ -220,6 +246,9 @@ func (f *FakeBackupStore) GetBackupSchedule(_ context.Context) (*backup.BackupSc
 func (f *FakeBackupStore) SetBackupScheduleNextRunAt(_ context.Context, nextRunAt time.Time) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.SetScheduleErr != nil {
+		return f.SetScheduleErr
+	}
 	if f.schedule == nil {
 		f.schedule = &backup.BackupSchedule{NextRunAt: nextRunAt}
 	} else {
@@ -232,6 +261,9 @@ func (f *FakeBackupStore) SetBackupScheduleNextRunAt(_ context.Context, nextRunA
 func (f *FakeBackupStore) CreateRepoBackup(_ context.Context, repoName string, createdAt time.Time) (*backup.RepoBackup, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.CreateRepoBackupErr != nil {
+		return nil, f.CreateRepoBackupErr
+	}
 	id := f.allocID()
 	b := &backup.RepoBackup{
 		ID:         id,
@@ -249,6 +281,9 @@ func (f *FakeBackupStore) CreateRepoBackup(_ context.Context, repoName string, c
 func (f *FakeBackupStore) GetRepoBackup(_ context.Context, id int64) (*backup.RepoBackup, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
+	if f.UpdateRepoBackupErr != nil {
+		return nil, f.UpdateRepoBackupErr
+	}
 	b, ok := f.repoBackups[id]
 	if !ok {
 		return nil, backup.ErrBackupNotFound
@@ -261,6 +296,9 @@ func (f *FakeBackupStore) GetRepoBackup(_ context.Context, id int64) (*backup.Re
 func (f *FakeBackupStore) ListRepoBackupsByRepo(_ context.Context, repoName string) ([]backup.RepoBackup, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
+	if f.ListRepoBackupsErr != nil {
+		return nil, f.ListRepoBackupsErr
+	}
 	var result []backup.RepoBackup
 	for _, b := range f.repoBackups {
 		if b.RepoName == repoName {
@@ -287,6 +325,9 @@ func (f *FakeBackupStore) ListRepoBackupsByStatus(_ context.Context, status back
 func (f *FakeBackupStore) UpdateRepoBackupStatus(_ context.Context, id int64, status backup.RepoBackupStatus, retryCount int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.UpdateRepoBackupErr != nil {
+		return f.UpdateRepoBackupErr
+	}
 	b, ok := f.repoBackups[id]
 	if !ok {
 		return backup.ErrBackupNotFound
@@ -300,6 +341,9 @@ func (f *FakeBackupStore) UpdateRepoBackupStatus(_ context.Context, id int64, st
 func (f *FakeBackupStore) MarkRepoBackupsTimedOut(_ context.Context, cutoff time.Time) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.MarkRepoBackupsTimedOutErr != nil {
+		return 0, f.MarkRepoBackupsTimedOutErr
+	}
 	var count int64
 	for _, b := range f.repoBackups {
 		if b.Status == backup.RepoBackupUploading && !b.CreatedAt.After(cutoff) {
@@ -314,6 +358,9 @@ func (f *FakeBackupStore) MarkRepoBackupsTimedOut(_ context.Context, cutoff time
 func (f *FakeBackupStore) DeleteRepoBackup(_ context.Context, id int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.DeleteRepoBackupErr != nil {
+		return f.DeleteRepoBackupErr
+	}
 	delete(f.repoBackups, id)
 	return nil
 }
@@ -322,6 +369,9 @@ func (f *FakeBackupStore) DeleteRepoBackup(_ context.Context, id int64) error {
 func (f *FakeBackupStore) CreateServerSnapshot(_ context.Context, createdAt time.Time) (*backup.ServerSnapshot, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.CreateServerSnapshotErr != nil {
+		return nil, f.CreateServerSnapshotErr
+	}
 	id := f.allocID()
 	s := &backup.ServerSnapshot{
 		ID:         id,
@@ -350,6 +400,9 @@ func (f *FakeBackupStore) GetServerSnapshot(_ context.Context, id int64) (*backu
 func (f *FakeBackupStore) ListServerSnapshotsByStatus(_ context.Context, status backup.ServerSnapshotStatus) ([]backup.ServerSnapshot, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
+	if f.ListSnapshotsErr != nil {
+		return nil, f.ListSnapshotsErr
+	}
 	var result []backup.ServerSnapshot
 	for _, s := range f.snapshots {
 		if s.Status == status {
@@ -363,6 +416,9 @@ func (f *FakeBackupStore) ListServerSnapshotsByStatus(_ context.Context, status 
 func (f *FakeBackupStore) UpdateServerSnapshotStatus(_ context.Context, id int64, status backup.ServerSnapshotStatus, retryCount int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.UpdateServerSnapshotErr != nil {
+		return f.UpdateServerSnapshotErr
+	}
 	s, ok := f.snapshots[id]
 	if !ok {
 		return backup.ErrSnapshotNotFound
@@ -376,6 +432,9 @@ func (f *FakeBackupStore) UpdateServerSnapshotStatus(_ context.Context, id int64
 func (f *FakeBackupStore) MarkServerSnapshotsTimedOut(_ context.Context, cutoff time.Time) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.MarkSnapshotsTimedOutErr != nil {
+		return 0, f.MarkSnapshotsTimedOutErr
+	}
 	var count int64
 	for _, s := range f.snapshots {
 		if s.Status == backup.ServerSnapshotUploading && !s.CreatedAt.After(cutoff) {
@@ -390,6 +449,9 @@ func (f *FakeBackupStore) MarkServerSnapshotsTimedOut(_ context.Context, cutoff 
 func (f *FakeBackupStore) DeleteServerSnapshot(_ context.Context, id int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.DeleteSnapshotErr != nil {
+		return f.DeleteSnapshotErr
+	}
 	delete(f.snapshots, id)
 	return nil
 }
@@ -398,6 +460,9 @@ func (f *FakeBackupStore) DeleteServerSnapshot(_ context.Context, id int64) erro
 func (f *FakeBackupStore) CreateRestoreJob(_ context.Context) (*backup.RestoreJob, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.CreateRestoreJobErr != nil {
+		return nil, f.CreateRestoreJobErr
+	}
 	id := f.allocID()
 	j := &backup.RestoreJob{
 		ID:     id,
@@ -412,6 +477,9 @@ func (f *FakeBackupStore) CreateRestoreJob(_ context.Context) (*backup.RestoreJo
 func (f *FakeBackupStore) GetRestoreJob(_ context.Context, id int64) (*backup.RestoreJob, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
+	if f.UpdateRestoreJobErr != nil {
+		return nil, f.UpdateRestoreJobErr
+	}
 	j, ok := f.restoreJobs[id]
 	if !ok {
 		return nil, backup.ErrRestoreJobNotFound
@@ -424,6 +492,9 @@ func (f *FakeBackupStore) GetRestoreJob(_ context.Context, id int64) (*backup.Re
 func (f *FakeBackupStore) ListRestoreJobsByStatus(_ context.Context, status backup.RestoreJobStatus) ([]backup.RestoreJob, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
+	if f.ListRestoreJobsErr != nil {
+		return nil, f.ListRestoreJobsErr
+	}
 	var result []backup.RestoreJob
 	for _, j := range f.restoreJobs {
 		if j.Status == status {
@@ -437,6 +508,12 @@ func (f *FakeBackupStore) ListRestoreJobsByStatus(_ context.Context, status back
 func (f *FakeBackupStore) UpdateRestoreJobStatus(_ context.Context, id int64, status backup.RestoreJobStatus) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if status != backup.RestoreJobFailed && f.UpdateRestoreNonFailedErr != nil {
+		return f.UpdateRestoreNonFailedErr
+	}
+	if f.UpdateRestoreJobErr != nil {
+		return f.UpdateRestoreJobErr
+	}
 	j, ok := f.restoreJobs[id]
 	if !ok {
 		return backup.ErrRestoreJobNotFound

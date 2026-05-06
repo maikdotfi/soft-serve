@@ -224,3 +224,48 @@ func TestService_ListStoredServerSnapshots(t *testing.T) {
 	is.Equal(len(snapshots), 1)
 	is.Equal(snapshots[0].Status, backup.ServerSnapshotStored)
 }
+
+// TestService_StartRestore_TransitionsToFailedWhenBeginFails catches bug #4:
+// When beginServerRestore fails (e.g., UpdateRestoreJobStatus returns an
+// error), the RestoreJob should transition to failed rather than being left
+// orphaned in starting state. Currently StartRestore returns an error but
+// the job stays in starting.
+func TestService_StartRestore_TransitionsToFailedWhenBeginFails(t *testing.T) {
+	is := is.New(t)
+	cfg := backup.DefaultBackupConfig()
+	cfg.S3Endpoint = "https://s3.example.com"
+	cfg.S3Bucket = "test-bucket"
+	cfg.S3Region = "us-east-1"
+
+	store := fake.NewFakeBackupStore()
+	s3 := fake.NewFakeS3Provider()
+	bundler := fake.NewFakeBundleProvider()
+	snapshotDataProvider := fake.NewFakeSnapshotDataProvider()
+	clock := newFakeClock()
+	repos := fake.NewFakeRepoProvider([]backup.RepoInfo{
+		{Name: "repo1", DefaultBranch: "main"},
+	})
+
+	// Make UpdateRestoreJobStatus fail for non-failed targets. This simulates
+	// a DB error during the starting -> restoring_server transition, but
+	// allows the cleanup path (starting -> failed) to succeed.
+	store.UpdateRestoreNonFailedErr = backup.ErrBackupNotFound
+
+	svc := backup.NewBackupService(cfg, store, s3, bundler, snapshotDataProvider, repos, clock, nil)
+
+	_, err := svc.StartRestore(context.Background(), backup.UserInfo{Role: "admin"})
+	// StartRestore should handle the error and ensure the job is in failed state.
+	// Currently it returns an error but leaves the job in starting.
+	is.True(err != nil) // error expected when beginServerRestore fails
+
+	// Bug #4: After the fix, the job must be in failed state.
+	// Currently it stays in starting because failRestoreJob is not called.
+	jobs, listErr := store.ListRestoreJobsByStatus(context.Background(), backup.RestoreJobFailed)
+	is.NoErr(listErr)
+	is.Equal(len(jobs), 1) // job must have been transitioned to failed
+
+	// Also verify no job remains in starting.
+	startingJobs, listErr := store.ListRestoreJobsByStatus(context.Background(), backup.RestoreJobStarting)
+	is.NoErr(listErr)
+	is.Equal(len(startingJobs), 0) // no orphaned jobs in starting
+}

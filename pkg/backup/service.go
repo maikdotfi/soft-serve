@@ -445,6 +445,9 @@ func (s *BackupService) StartRestore(ctx context.Context, admin UserInfo) (*Rest
 
 	// BeginServerRestore: auto-transition starting -> restoring_server
 	if err := s.beginServerRestore(ctx, job); err != nil {
+		// Transition to failed rather than leaving the job orphaned in starting.
+		// Per spec rule RestoreFailedFromStarting: starting -> failed.
+		s.failRestoreJob(ctx, job.ID)
 		return nil, err
 	}
 
