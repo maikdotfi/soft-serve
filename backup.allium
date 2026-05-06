@@ -262,6 +262,31 @@ rule ServerSnapshotUploadTimeout {
 }
 
 ------------------------------------------------------------
+-- Manual backup triggers (admin-initiated)
+------------------------------------------------------------
+
+rule CreateManualServerSnapshot {
+    when: AdminRequestsManualServerSnapshot(admin)
+    ensures: ServerSnapshot.created(created_at: now, retry_count: 0, status: uploading)
+
+    @guidance
+        -- Admin manually triggers a server snapshot outside the normal schedule.
+        -- Useful for pre-upgrade snapshots or ad-hoc admin operations.
+        -- The upload follows the same retry/timeout rules as scheduled snapshots.
+}
+
+rule CreateManualRepoBackup {
+    when: AdminRequestsManualRepoBackup(admin, repo)
+    ensures: RepoBackup.created(repo: repo, created_at: now, retry_count: 0, status: uploading)
+
+    @guidance
+        -- Admin manually triggers a repository backup outside the normal
+        -- push-triggered or schedule-triggered paths. Useful for ad-hoc
+        -- backup of a specific repo.
+        -- The upload follows the same retry/timeout rules as push-triggered backups.
+}
+
+------------------------------------------------------------
 -- Restore
 ------------------------------------------------------------
 
@@ -271,6 +296,11 @@ rule StartRestore {
     @guidance
         -- Admin triggers a full restore via a subcommand (e.g., soft restore).
         -- The server must be able to reach the S3 bucket where backups are stored.
+        -- At most one RestoreJob may be active (not completed) at a time.
+        -- If a RestoreJob is already in progress (starting, restoring_server,
+        -- or restoring_repos), a new restore request is rejected.
+        -- To override this guard (e.g., if a previous job is stuck), admins
+        -- may pass a --force flag which ignores existing jobs.
 }
 
 rule BeginServerRestore {
@@ -376,6 +406,8 @@ surface AdminBackupManagement {
 
     provides:
         AdminRequestsRestore(admin)
+        AdminRequestsManualServerSnapshot(admin)
+        AdminRequestsManualRepoBackup(admin, repo)
 }
 
 surface S3UploadAdapter {
