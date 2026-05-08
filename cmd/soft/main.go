@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/soft-serve/cmd/soft/admin"
 	"github.com/charmbracelet/soft-serve/cmd/soft/browse"
+	cicmd "github.com/charmbracelet/soft-serve/cmd/soft/ci"
 	"github.com/charmbracelet/soft-serve/cmd/soft/hook"
 	"github.com/charmbracelet/soft-serve/cmd/soft/restore"
 	"github.com/charmbracelet/soft-serve/cmd/soft/serve"
@@ -78,6 +79,7 @@ func init() {
 		admin.Command,
 		browse.Command,
 		restore.Command,
+		cicmd.Command,
 	)
 	rootCmd.CompletionOptions.HiddenDefaultCmd = true
 
