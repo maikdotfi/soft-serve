@@ -396,6 +396,42 @@ func TestService_SyncWorkflowsOnPush_ParseErrorRejectsPushAndDoesNotChangeStored
 	}
 }
 
+func TestService_ValidateWorkflowsAtCommit_ReturnsParseErrorAndDoesNotTouchStore(t *testing.T) {
+	ctx := context.Background()
+	service, store, workflowSource, _, _, _ := newTestService(t)
+	existing := Workflow{RepoName: "repo1", Name: "unit", Script: "go test ./...", RunsOn: "linux-amd64"}
+	store.putWorkflow(t, existing)
+	workflowSource.commitParseErr = ErrWorkflowParse
+
+	err := service.ValidateWorkflowsAtCommit(ctx, "repo1", "deadbeef")
+	if !errors.Is(err, ErrWorkflowParse) {
+		t.Fatalf("validate at commit err = %v, want %v", err, ErrWorkflowParse)
+	}
+	if len(workflowSource.commitParseCalls) != 1 || workflowSource.commitParseCalls[0].CommitSHA != "deadbeef" {
+		t.Fatalf("expected one parse call against deadbeef, got %#v", workflowSource.commitParseCalls)
+	}
+
+	workflows, err := store.ListWorkflowsByRepo(ctx, "repo1")
+	if err != nil {
+		t.Fatalf("list workflows: %v", err)
+	}
+	if len(workflows) != 1 || workflows[0].Name != existing.Name {
+		t.Fatalf("validation must not touch stored workflows: %#v", workflows)
+	}
+}
+
+func TestService_ValidateWorkflowsAtCommit_OkWhenParseSucceeds(t *testing.T) {
+	ctx := context.Background()
+	service, _, workflowSource, _, _, _ := newTestService(t)
+	workflowSource.definitions = []WorkflowDefinition{
+		{Name: "unit", Script: "go test ./...", RunsOn: "linux-amd64", Triggers: map[EventType]bool{EventTypePush: true}},
+	}
+
+	if err := service.ValidateWorkflowsAtCommit(ctx, "repo1", "cafef00d"); err != nil {
+		t.Fatalf("validate at commit: %v", err)
+	}
+}
+
 func TestService_HandleWebhookEvent_CreatesPendingRunsForMatchingWorkflowTriggers(t *testing.T) {
 	ctx := context.Background()
 	service, store, _, _, _, clock := newTestService(t)
@@ -895,15 +931,32 @@ func (g *fakeTokenGenerator) NewToken() (string, error) {
 }
 
 type fakeWorkflowSource struct {
-	definitions []WorkflowDefinition
-	err         error
-	parseCalls  []string
+	definitions       []WorkflowDefinition
+	err               error
+	parseCalls        []string
+	commitParseErr    error
+	commitParseCalls  []commitParseCall
+}
+
+type commitParseCall struct {
+	RepoName  string
+	CommitSHA string
 }
 
 func (s *fakeWorkflowSource) ParseMagicFolder(_ context.Context, repoName string) ([]WorkflowDefinition, error) {
 	s.parseCalls = append(s.parseCalls, repoName)
 	if s.err != nil {
 		return nil, s.err
+	}
+	out := make([]WorkflowDefinition, len(s.definitions))
+	copy(out, s.definitions)
+	return out, nil
+}
+
+func (s *fakeWorkflowSource) ParseMagicFolderAtCommit(_ context.Context, repoName, commitSHA string) ([]WorkflowDefinition, error) {
+	s.commitParseCalls = append(s.commitParseCalls, commitParseCall{RepoName: repoName, CommitSHA: commitSHA})
+	if s.commitParseErr != nil {
+		return nil, s.commitParseErr
 	}
 	out := make([]WorkflowDefinition, len(s.definitions))
 	copy(out, s.definitions)
