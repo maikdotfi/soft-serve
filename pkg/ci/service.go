@@ -72,6 +72,19 @@ func (s *Service) RemoveRunner(ctx context.Context, user UserInfo, name string) 
 	return s.store.RemoveRunnerRegistration(ctx, name)
 }
 
+// ValidateWorkflowsAtCommit parses the magic folder at the given
+// commit SHA and returns the parse error (if any) without touching
+// the stored workflow set. The push gate (surface RepoPushGate)
+// calls this at pre-receive time against the incoming new tree so
+// pushes with unparseable workflow files can be rejected before the
+// ref is activated.
+func (s *Service) ValidateWorkflowsAtCommit(ctx context.Context, repoName, commitSHA string) error {
+	if _, err := s.workflowSource.ParseMagicFolderAtCommit(ctx, repoName, commitSHA); err != nil {
+		return err
+	}
+	return nil
+}
+
 // SyncWorkflowsOnPush reconciles the stored Workflow set for repoName
 // with the parsed contents of its magic folder. If the parse fails,
 // the stored set is left untouched and the parse error is returned;
@@ -265,6 +278,52 @@ func (s *Service) CancelRun(ctx context.Context, _ UserInfo, runID int64) error 
 	default:
 		return ErrInvalidTransition
 	}
+}
+
+// ListAllRuns returns every stored run. Used by the read-only
+// RunQueryAPI surface; per-repo filtering can layer on top.
+func (s *Service) ListAllRuns(ctx context.Context) ([]Run, error) {
+	return s.store.ListRuns(ctx)
+}
+
+// GetRun returns the run with the given ID, or ErrRunNotFound.
+// Used by the read-only RunQueryAPI surface.
+func (s *Service) GetRun(ctx context.Context, id int64) (Run, error) {
+	run, err := s.store.GetRun(ctx, id)
+	if err != nil {
+		return Run{}, err
+	}
+	return *run, nil
+}
+
+// ListLogEntries returns the log entries appended to a run, in
+// insertion order.
+func (s *Service) ListLogEntries(ctx context.Context, runID int64) ([]LogEntry, error) {
+	return s.store.ListLogEntriesByRun(ctx, runID)
+}
+
+// ListWorkflowsByRepo returns the stored Workflow set for a repo.
+func (s *Service) ListWorkflowsByRepo(ctx context.Context, repoName string) ([]Workflow, error) {
+	return s.store.ListWorkflowsByRepo(ctx, repoName)
+}
+
+// ListPendingRuns returns the runs in the RunPending state.
+// Background loops use it to drive DispatchPendingRun for each
+// freshly created Run. The filter is performed in-process; if and
+// when scale demands it the Store port can grow a status-aware
+// list method.
+func (s *Service) ListPendingRuns(ctx context.Context) ([]Run, error) {
+	all, err := s.store.ListRuns(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list runs: %w", err)
+	}
+	pending := make([]Run, 0, len(all))
+	for _, run := range all {
+		if run.Status == RunPending {
+			pending = append(pending, run)
+		}
+	}
+	return pending, nil
 }
 
 // EnforceTimeouts fires the PickupTimeout rule across all currently

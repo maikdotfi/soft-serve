@@ -20,10 +20,17 @@ import (
 	ss3 "github.com/charmbracelet/soft-serve/pkg/backup/adapters/s3"
 	"github.com/charmbracelet/soft-serve/pkg/backup/adapters/snapshot"
 	storeadapter "github.com/charmbracelet/soft-serve/pkg/backup/adapters/store"
+	"github.com/charmbracelet/soft-serve/pkg/ci"
+	"github.com/charmbracelet/soft-serve/pkg/ci/adapters/cryptotokens"
+	"github.com/charmbracelet/soft-serve/pkg/ci/adapters/httpdispatch"
+	"github.com/charmbracelet/soft-serve/pkg/ci/adapters/realclock"
+	"github.com/charmbracelet/soft-serve/pkg/ci/adapters/sqlstore"
+	"github.com/charmbracelet/soft-serve/pkg/ci/adapters/yamlworkflows"
 	"github.com/charmbracelet/soft-serve/pkg/config"
 	"github.com/charmbracelet/soft-serve/pkg/db"
 	"github.com/charmbracelet/soft-serve/pkg/db/migrate"
 	"github.com/charmbracelet/soft-serve/pkg/store"
+	"github.com/charmbracelet/soft-serve/pkg/webhook"
 	"github.com/spf13/cobra"
 )
 
@@ -138,6 +145,30 @@ var (
 						logger.Info("backup service wired, push-triggered repo backups enabled")
 					}
 				}
+			}
+
+			// Wire the CI subsystem (ci.allium). Mirrors the backup
+			// wiring above: build a ci.Service with the production
+			// adapters, attach it to the backend so push hooks can
+			// reach it, and register the in-process subscriber so
+			// webhook events fan out into pending Runs.
+			//
+			// CI is wired unconditionally — the schema migrations
+			// run unconditionally too, and an unused subsystem is
+			// cheap (the cron tick exits early when no work
+			// exists). A future config flag can gate it if needed.
+			{
+				be := backend.FromContext(ctx)
+				ciLogger := log.FromContext(ctx).WithPrefix("ci")
+				ciStore := sqlstore.New(db)
+				ciSource := yamlworkflows.New(be)
+				ciDispatcher := httpdispatch.New(nil, cfg.HTTP.PublicURL)
+				ciTokens := cryptotokens.New()
+				ciClock := realclock.New()
+				ciSvc := ci.NewService(ci.DefaultConfig(), ciStore, ciSource, ciDispatcher, ciTokens, ciClock, ciLogger)
+				be.SetCIService(ciSvc)
+				webhook.SetFiredEventHandler(be.OnWebhookFired)
+				ciLogger.Info("ci subsystem wired")
 			}
 
 			s, err := NewServer(ctx)

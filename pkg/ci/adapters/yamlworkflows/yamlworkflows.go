@@ -24,6 +24,7 @@ import (
 	"path"
 	"strings"
 
+	"github.com/charmbracelet/soft-serve/git"
 	"github.com/charmbracelet/soft-serve/pkg/backend"
 	"github.com/charmbracelet/soft-serve/pkg/ci"
 	"gopkg.in/yaml.v3"
@@ -51,13 +52,9 @@ func New(be *backend.Backend) *Source {
 // A file that fails to parse causes the whole call to return
 // ci.ErrWorkflowParse without producing partial output.
 func (s *Source) ParseMagicFolder(ctx context.Context, repoName string) ([]ci.WorkflowDefinition, error) {
-	repo, err := s.be.Repository(ctx, repoName)
+	gitRepo, err := s.openGitRepo(ctx, repoName)
 	if err != nil {
-		return nil, fmt.Errorf("open repository %q: %w", repoName, err)
-	}
-	gitRepo, err := repo.Open()
-	if err != nil {
-		return nil, fmt.Errorf("open git repo: %w", err)
+		return nil, err
 	}
 
 	head, err := gitRepo.HEAD()
@@ -66,10 +63,42 @@ func (s *Source) ParseMagicFolder(ctx context.Context, repoName string) ([]ci.Wo
 		// failure. Return an empty slice.
 		return nil, nil
 	}
+	return s.parseAtTree(gitRepo, head.ID)
+}
 
-	tree, err := gitRepo.LsTree(head.ID)
+// ParseMagicFolderAtCommit enumerates and parses every YAML file
+// under MagicFolder at the given commit SHA. Used at pre-receive
+// time when the ref is not yet updated and the gate must validate
+// the *incoming* tree. A missing magic folder is treated the same
+// as in ParseMagicFolder: no parse failure, zero definitions.
+func (s *Source) ParseMagicFolderAtCommit(ctx context.Context, repoName, commitSHA string) ([]ci.WorkflowDefinition, error) {
+	gitRepo, err := s.openGitRepo(ctx, repoName)
 	if err != nil {
-		return nil, fmt.Errorf("ls-tree %s: %w", head.ID, err)
+		return nil, err
+	}
+	return s.parseAtTree(gitRepo, commitSHA)
+}
+
+func (s *Source) openGitRepo(ctx context.Context, repoName string) (*git.Repository, error) {
+	repo, err := s.be.Repository(ctx, repoName)
+	if err != nil {
+		return nil, fmt.Errorf("open repository %q: %w", repoName, err)
+	}
+	g, err := repo.Open()
+	if err != nil {
+		return nil, fmt.Errorf("open git repo: %w", err)
+	}
+	return g, nil
+}
+
+// parseAtTree walks the magic folder under the given commit's tree
+// in the already-opened repository. Returns nil, nil if the magic
+// folder is absent (so an empty repo or a repo without workflows is
+// indistinguishable from "no parse failure, no definitions").
+func (s *Source) parseAtTree(gitRepo *git.Repository, commitSHA string) ([]ci.WorkflowDefinition, error) {
+	tree, err := gitRepo.LsTree(commitSHA)
+	if err != nil {
+		return nil, fmt.Errorf("ls-tree %s: %w", commitSHA, err)
 	}
 
 	subtree, err := tree.SubTree(MagicFolder)

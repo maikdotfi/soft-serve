@@ -97,9 +97,17 @@ var (
 
 			switch cmdName {
 			case hooks.PreReceiveHook:
+				// Gate: validate CI workflow files in the incoming
+				// tree before existing pre-receive logic runs. A
+				// parse error rejects the push by returning a
+				// non-zero exit, which git surfaces to the client.
+				if err := hks.CIPreReceive(ctx, repoName, opts, stderr); err != nil {
+					return err
+				}
 				hks.PreReceive(ctx, stdout, stderr, repoName, opts)
 			case hooks.PostReceiveHook:
 				hks.PostReceive(ctx, stdout, stderr, repoName, opts)
+				hks.CIPostReceive(ctx, repoName, opts)
 			}
 		case hooks.UpdateHook:
 			if len(args) != 3 {

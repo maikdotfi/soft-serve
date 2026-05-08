@@ -61,8 +61,18 @@ type Store interface {
 // WorkflowSource parses the magic folder of a repository into
 // WorkflowDefinitions. Adapters wrap their parse errors with
 // ErrWorkflowParse so callers can match on it.
+//
+// ParseMagicFolder reads the repository's current HEAD tree; it is
+// used for post-push reconciliation (rule WorkflowsSyncedOnPush).
+//
+// ParseMagicFolderAtCommit reads the tree at a specific commit SHA;
+// it is used at pre-receive time, before the new ref has been
+// activated, so the gate (surface RepoPushGate) can validate the
+// incoming workflow files and reject pushes whose magic folder fails
+// to parse.
 type WorkflowSource interface {
 	ParseMagicFolder(ctx context.Context, repoName string) ([]WorkflowDefinition, error)
+	ParseMagicFolderAtCommit(ctx context.Context, repoName string, commitSHA string) ([]WorkflowDefinition, error)
 }
 
 // RunnerDispatcher sends dispatch and cancel webhooks to a runner.
