@@ -8,4 +8,5 @@ completions/
 manpages/
 soft_serve_ed25519*
 .garage/
+bin/
 
