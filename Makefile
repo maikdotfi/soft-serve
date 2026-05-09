@@ -19,6 +19,18 @@ GARAGE_ADMIN_PORT ?= 3903
 
 GARAGE_KEY_NAME ?= soft-serve-it
 
+# Install layout (override on the make command line if needed).
+PREFIX        ?= /usr/local
+BINDIR        ?= $(PREFIX)/bin
+SYSTEMD_DIR   ?= /etc/systemd/system
+SOFT_SERVE_USER  ?= soft-serve
+SOFT_SERVE_GROUP ?= soft-serve
+SOFT_SERVE_HOME  ?= /var/lib/soft-serve
+SOFT_SERVE_BIN   ?= $(BINDIR)/soft
+
+BUILD_DIR ?= bin
+BUILD_BIN := $(BUILD_DIR)/soft
+
 .PHONY: help
 help:
 	@echo "Targets:"
@@ -28,6 +40,10 @@ help:
 	@echo "  garage-status     Show whether the daemon is running and print the env"
 	@echo "  test-integration  Run integration-tagged tests against the daemon"
 	@echo "  test              Run the regular unit-test suite"
+	@echo "  build             Compile the soft binary into $(BUILD_DIR)/"
+	@echo "  install-binary    Build and install the soft binary, replacing $(SOFT_SERVE_BIN) (run as root)"
+	@echo "  install-systemd   Install the soft-serve systemd unit (run as root)"
+	@echo "  uninstall-systemd Stop, disable, and remove the systemd unit (run as root)"
 
 .PHONY: test
 test:
@@ -158,3 +174,67 @@ _garage-bootstrap:
 		echo "export GARAGE_SECRET_KEY=$$SECRET"; \
 		echo "export GARAGE_KEY_NAME=$(GARAGE_KEY_NAME)"; \
 	} > $(GARAGE_ENV)
+
+# --- build & install ---
+
+.PHONY: build
+build:
+	@mkdir -p $(BUILD_DIR)
+	go build -o $(BUILD_BIN) ./cmd/soft
+
+.PHONY: install-binary
+install-binary: build
+	@if [ "$$(id -u)" -ne 0 ]; then echo "install-binary must be run as root"; exit 1; fi
+	@install -d $(dir $(SOFT_SERVE_BIN))
+	install -m 0755 $(BUILD_BIN) $(SOFT_SERVE_BIN)
+	@echo "installed $(SOFT_SERVE_BIN)"
+	@if systemctl is-active --quiet soft-serve.service 2>/dev/null; then \
+		echo "soft-serve.service is running; restart it to pick up the new binary:"; \
+		echo "  sudo systemctl restart soft-serve.service"; \
+	fi
+
+# --- systemd install ---
+#
+# Assumes the `soft` binary is already in place at $(SOFT_SERVE_BIN). Override
+# any of the install variables on the command line, e.g.:
+#   sudo make install-systemd SOFT_SERVE_BIN=/usr/bin/soft
+
+.PHONY: install-systemd
+install-systemd:
+	@if [ "$$(id -u)" -ne 0 ]; then echo "install-systemd must be run as root"; exit 1; fi
+	@if [ ! -x "$(SOFT_SERVE_BIN)" ]; then \
+		echo "binary not found or not executable at $(SOFT_SERVE_BIN)"; \
+		echo "install it first or override SOFT_SERVE_BIN=/path/to/soft"; \
+		exit 1; \
+	fi
+	@if ! getent group $(SOFT_SERVE_GROUP) >/dev/null; then \
+		echo "creating group $(SOFT_SERVE_GROUP)"; \
+		groupadd --system $(SOFT_SERVE_GROUP); \
+	fi
+	@if ! id -u $(SOFT_SERVE_USER) >/dev/null 2>&1; then \
+		echo "creating user $(SOFT_SERVE_USER)"; \
+		useradd --system --gid $(SOFT_SERVE_GROUP) \
+			--home-dir $(SOFT_SERVE_HOME) --shell /usr/sbin/nologin \
+			$(SOFT_SERVE_USER); \
+	fi
+	@install -d -o $(SOFT_SERVE_USER) -g $(SOFT_SERVE_GROUP) -m 0750 $(SOFT_SERVE_HOME)
+	@install -m 0644 deploy/soft-serve.service $(SYSTEMD_DIR)/soft-serve.service
+	@if [ ! -e /etc/soft-serve.conf ]; then \
+		install -m 0644 deploy/soft-serve.conf /etc/soft-serve.conf; \
+	else \
+		echo "/etc/soft-serve.conf already exists, leaving it alone"; \
+	fi
+	@systemctl daemon-reload
+	@echo
+	@echo "soft-serve.service installed."
+	@echo "Enable and start with:"
+	@echo "  sudo systemctl enable --now soft-serve.service"
+
+.PHONY: uninstall-systemd
+uninstall-systemd:
+	@if [ "$$(id -u)" -ne 0 ]; then echo "uninstall-systemd must be run as root"; exit 1; fi
+	-@systemctl disable --now soft-serve.service 2>/dev/null || true
+	@rm -f $(SYSTEMD_DIR)/soft-serve.service
+	@systemctl daemon-reload
+	@echo "soft-serve.service removed."
+	@echo "Data in $(SOFT_SERVE_HOME), the $(SOFT_SERVE_USER) user, and /etc/soft-serve.conf were left in place."

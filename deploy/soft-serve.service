@@ -1,0 +1,31 @@
+[Unit]
+Description=Soft Serve git server
+Documentation=https://github.com/charmbracelet/soft-serve
+Requires=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=soft-serve
+Group=soft-serve
+Restart=always
+RestartSec=1
+ExecStart=/usr/local/bin/soft serve
+Environment=SOFT_SERVE_DATA_PATH=/var/lib/soft-serve
+EnvironmentFile=-/etc/soft-serve.conf
+WorkingDirectory=/var/lib/soft-serve
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/soft-serve
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
