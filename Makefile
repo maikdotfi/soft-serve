@@ -31,6 +31,12 @@ SOFT_SERVE_BIN   ?= $(BINDIR)/soft
 BUILD_DIR ?= bin
 BUILD_BIN := $(BUILD_DIR)/soft
 
+# Remote deployment (cross-compile macOS → Linux)
+DEPLOY_HOST  ?=
+DEPLOY_USER  ?=
+DEPLOY_BIN   ?= $(SOFT_SERVE_BIN)
+DEPLOY_SSH   := $(if $(DEPLOY_USER),$(DEPLOY_USER)@$(DEPLOY_HOST),$(DEPLOY_HOST))
+
 .PHONY: help
 help:
 	@echo "Targets:"
@@ -44,6 +50,8 @@ help:
 	@echo "  install-binary    Build and install the soft binary, replacing $(SOFT_SERVE_BIN) (run as root)"
 	@echo "  install-systemd   Install the soft-serve systemd unit (run as root)"
 	@echo "  uninstall-systemd Stop, disable, and remove the systemd unit (run as root)"
+	@echo "  deploy            Cross-compile for Linux, scp to DEPLOY_HOST, and restart soft-serve.service"
+	@echo "                    (requires DEPLOY_HOST=..., optional DEPLOY_USER=..., DEPLOY_BIN=...)"
 
 .PHONY: test
 test:
@@ -192,6 +200,17 @@ install-binary: build
 		echo "soft-serve.service is running; restart it to pick up the new binary:"; \
 		echo "  sudo systemctl restart soft-serve.service"; \
 	fi
+
+# --- remote deploy ---
+
+.PHONY: deploy
+deploy:
+	@test -n "$(DEPLOY_HOST)" || { echo "DEPLOY_HOST is required (e.g. make deploy DEPLOY_HOST=server.example.com)"; exit 1; }
+	@mkdir -p $(BUILD_DIR)
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o $(BUILD_DIR)/soft-linux-amd64 ./cmd/soft
+	scp $(BUILD_DIR)/soft-linux-amd64 $(DEPLOY_SSH):$(DEPLOY_BIN)
+	ssh $(DEPLOY_SSH) 'sudo systemctl restart soft-serve.service'
+	@echo "deployed and restarted soft-serve on $(DEPLOY_HOST)"
 
 # --- systemd install ---
 #
