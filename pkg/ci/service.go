@@ -19,6 +19,7 @@ type Service struct {
 	workflowSource WorkflowSource
 	dispatcher     RunnerDispatcher
 	tokens         TokenGenerator
+	repoAccess     RepoAccessChecker
 	clock          Clock
 	logger         *log.Logger
 }
@@ -26,7 +27,12 @@ type Service struct {
 // NewService wires the service. logger may be nil; in that case the
 // service writes log messages to a discard sink so callers do not
 // need to construct a logger to use the service.
-func NewService(cfg Config, store Store, ws WorkflowSource, dispatcher RunnerDispatcher, tokens TokenGenerator, clock Clock, logger *log.Logger) *Service {
+//
+// repoAccess may be nil; in that case the service skips per-repo ACL
+// checks (effectively granting all authenticated callers write
+// access). Non-nil checkers are used by CancelRun and future
+// run-control operations.
+func NewService(cfg Config, store Store, ws WorkflowSource, dispatcher RunnerDispatcher, tokens TokenGenerator, repoAccess RepoAccessChecker, clock Clock, logger *log.Logger) *Service {
 	if logger == nil {
 		logger = log.New(io.Discard)
 	}
@@ -36,6 +42,7 @@ func NewService(cfg Config, store Store, ws WorkflowSource, dispatcher RunnerDis
 		workflowSource: ws,
 		dispatcher:     dispatcher,
 		tokens:         tokens,
+		repoAccess:     repoAccess,
 		clock:          clock,
 		logger:         logger,
 	}
@@ -257,10 +264,27 @@ func (s *Service) IngestLogLine(ctx context.Context, runnerToken string, runID i
 // cancel ACK from the runner before flipping to canceled; if the
 // runner does not ACK, the dispatcher error is returned and the run
 // keeps its current state so the caller may retry.
-func (s *Service) CancelRun(ctx context.Context, _ UserInfo, runID int64) error {
+//
+// Authorisation: the caller must have write access to the run's
+// repository (admins are granted access regardless). If the service
+// has no RepoAccessChecker wired, the check is skipped and all
+// callers are accepted.
+func (s *Service) CancelRun(ctx context.Context, user UserInfo, runID int64) error {
 	run, err := s.store.GetRun(ctx, runID)
 	if err != nil {
 		return fmt.Errorf("get run %d: %w", runID, err)
+	}
+
+	// Authorisation: admin bypasses the check; otherwise verify
+	// write access to the run's repo.
+	if user.Role != "admin" && s.repoAccess != nil {
+		ok, aerr := s.repoAccess.CanWriteToRepo(ctx, user.Username, run.RepoName)
+		if aerr != nil {
+			return fmt.Errorf("check access: %w", aerr)
+		}
+		if !ok {
+			return ErrNotAuthorized
+		}
 	}
 
 	switch run.Status {

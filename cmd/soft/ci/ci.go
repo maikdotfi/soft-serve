@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/soft-serve/cmd"
 	"github.com/charmbracelet/soft-serve/pkg/backend"
 	"github.com/charmbracelet/soft-serve/pkg/ci"
+	"github.com/charmbracelet/soft-serve/pkg/ci/adapters/backendaccess"
 	"github.com/charmbracelet/soft-serve/pkg/ci/adapters/cryptotokens"
 	"github.com/charmbracelet/soft-serve/pkg/ci/adapters/httpdispatch"
 	"github.com/charmbracelet/soft-serve/pkg/ci/adapters/realclock"
@@ -65,10 +66,11 @@ func serviceFromContext(c *cobra.Command) (*ci.Service, error) {
 	source := yamlworkflows.New(be)
 	dispatcher := httpdispatch.New(nil, callbackBaseURL(cfg))
 	tokens := cryptotokens.New()
+	access := backendaccess.New(be)
 	clock := realclock.New()
 	logger := log.FromContext(ctx).WithPrefix("ci")
 
-	return ci.NewService(ci.DefaultConfig(), store, source, dispatcher, tokens, clock, logger), nil
+	return ci.NewService(ci.DefaultConfig(), store, source, dispatcher, tokens, access, clock, logger), nil
 }
 
 // callbackBaseURL is the base URL the runner uses to report back to

@@ -16,7 +16,9 @@ import (
 	"github.com/charmbracelet/soft-serve/cmd"
 	"github.com/charmbracelet/soft-serve/pkg/backend"
 	"github.com/charmbracelet/soft-serve/pkg/config"
+	"github.com/charmbracelet/soft-serve/pkg/db"
 	"github.com/charmbracelet/soft-serve/pkg/hooks"
+	"github.com/charmbracelet/soft-serve/pkg/store"
 	"github.com/spf13/cobra"
 )
 
@@ -37,6 +39,22 @@ var (
 			logger := log.FromContext(c.Context())
 			if err := cmd.InitBackendContext(c, args); err != nil {
 				logger.Error("failed to initialize backend context", "err", err)
+				return ErrInternalServerError
+			}
+
+			// The hook subprocess must wire the same optional services
+			// the server wires; otherwise the post-receive guards
+			// (b.backup == nil, b.ci == nil) silently no-op and
+			// push-triggered backups / workflow sync never run.
+			ctx := c.Context()
+			if err := cmd.WireOptionalServices(
+				ctx,
+				config.FromContext(ctx),
+				backend.FromContext(ctx),
+				db.FromContext(ctx),
+				store.FromContext(ctx),
+			); err != nil {
+				logger.Error("failed to wire optional services", "err", err)
 				return ErrInternalServerError
 			}
 

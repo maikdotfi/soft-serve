@@ -15,17 +15,6 @@ import (
 	"charm.land/log/v2"
 	"github.com/charmbracelet/soft-serve/cmd"
 	"github.com/charmbracelet/soft-serve/pkg/backend"
-	"github.com/charmbracelet/soft-serve/pkg/backup"
-	"github.com/charmbracelet/soft-serve/pkg/backup/adapters/bundle"
-	ss3 "github.com/charmbracelet/soft-serve/pkg/backup/adapters/s3"
-	"github.com/charmbracelet/soft-serve/pkg/backup/adapters/snapshot"
-	storeadapter "github.com/charmbracelet/soft-serve/pkg/backup/adapters/store"
-	"github.com/charmbracelet/soft-serve/pkg/ci"
-	"github.com/charmbracelet/soft-serve/pkg/ci/adapters/cryptotokens"
-	"github.com/charmbracelet/soft-serve/pkg/ci/adapters/httpdispatch"
-	"github.com/charmbracelet/soft-serve/pkg/ci/adapters/realclock"
-	"github.com/charmbracelet/soft-serve/pkg/ci/adapters/sqlstore"
-	"github.com/charmbracelet/soft-serve/pkg/ci/adapters/yamlworkflows"
 	"github.com/charmbracelet/soft-serve/pkg/config"
 	"github.com/charmbracelet/soft-serve/pkg/db"
 	"github.com/charmbracelet/soft-serve/pkg/db/migrate"
@@ -84,92 +73,27 @@ var (
 				return fmt.Errorf("migration error: %w", err)
 			}
 
-			// Wire backup service for push-triggered backups (spec rule CreateRepoBackupOnPush).
-			// Per backup.allium: PostReceive hook detects pushes to default branch
-			// and creates RepoBackups. Without this wiring, d.backup is nil and
-			// push-triggered backups silently never fire.
-			if cfg.Backup.Enabled {
-				be := backend.FromContext(ctx)
-				dbstore := store.FromContext(ctx)
-				logger := log.FromContext(ctx).WithPrefix("backup")
+			// Attach backup + CI services to the Backend. The same call
+			// also runs in the post-receive hook subprocess (see
+			// cmd/soft/hook/hook.go) so push-triggered backups and
+			// workflow sync actually reach a wired Backend.
+			be := backend.FromContext(ctx)
+			dbstore := store.FromContext(ctx)
+			if err := cmd.WireOptionalServices(ctx, cfg, be, db, dbstore); err != nil {
+				return fmt.Errorf("wire optional services: %w", err)
+			}
 
-				cfgResult, err := config.ConvertBackupConfig(cfg.Backup)
-				if err != nil {
-					logger.Error("invalid backup configuration, push-triggered backups disabled", "err", err)
-				} else if cfg.Backup.S3Endpoint != "" && cfg.Backup.S3Bucket != "" && cfg.Backup.S3Region != "" {
-					backupCfg := backup.BackupConfig{
-						S3Endpoint:           cfgResult.S3Endpoint,
-						S3Bucket:             cfgResult.S3Bucket,
-						S3Region:             cfgResult.S3Region,
-						S3PathPrefix:          cfgResult.S3PathPrefix,
-						ScheduleInterval:     cfgResult.ScheduleInterval,
-						MaxRepoBackups:       cfgResult.MaxRepoBackups,
-						MaxServerSnapshots:    cfgResult.MaxServerSnapshots,
-						MaxUploadRetries:      cfgResult.MaxUploadRetries,
-						UploadTimeout:         cfgResult.UploadTimeout,
-						BackupReposOnSchedule: cfgResult.BackupReposOnSchedule,
-					}
-
-					s3Adapter, err := ss3.NewAdapter(ss3.S3Config{
-						Endpoint:   backupCfg.S3Endpoint,
-						Region:     backupCfg.S3Region,
-						Bucket:     backupCfg.S3Bucket,
-						PathPrefix: backupCfg.S3PathPrefix,
-						AccessKey:  cfg.Backup.S3AccessKey,
-						SecretKey:  cfg.Backup.S3SecretKey,
-					})
-					if err != nil {
-						logger.Error("failed to create S3 adapter, push-triggered backups disabled", "err", err)
-					} else {
-						storeAdapter := storeadapter.NewStoreAdapter(db, dbstore)
-						bundler := bundle.NewGitBundleProvider(cfg.DataPath)
-						snapshotProvider := snapshot.NewServerSnapshotProvider(cfg.DataPath, db, cfg.DB.DataSource, dbstore)
-						repoProvider := &serveRepoProvider{be: be}
-
-						svc := backup.NewBackupService(
-							backupCfg,
-							storeAdapter,
-							s3Adapter,
-							bundler,
-							snapshotProvider,
-							repoProvider,
-							&backup.WallClock{},
-							logger,
-						)
-						be.SetBackupService(svc)
-
-						if err := svc.CreateDefaultBackupSchedule(ctx); err != nil {
-							logger.Error("failed to create default backup schedule", "err", err)
-						}
-
-						logger.Info("backup service wired, push-triggered repo backups enabled")
-					}
+			// Serve-process-only side effects: the periodic backup
+			// schedule and the in-process webhook fan-out. Both rely
+			// on the long-running process and have no place in the
+			// short-lived hook subprocess.
+			if svc := be.BackupService(); svc != nil {
+				backupLogger := log.FromContext(ctx).WithPrefix("backup")
+				if err := svc.CreateDefaultBackupSchedule(ctx); err != nil {
+					backupLogger.Error("failed to create default backup schedule", "err", err)
 				}
 			}
-
-			// Wire the CI subsystem (ci.allium). Mirrors the backup
-			// wiring above: build a ci.Service with the production
-			// adapters, attach it to the backend so push hooks can
-			// reach it, and register the in-process subscriber so
-			// webhook events fan out into pending Runs.
-			//
-			// CI is wired unconditionally — the schema migrations
-			// run unconditionally too, and an unused subsystem is
-			// cheap (the cron tick exits early when no work
-			// exists). A future config flag can gate it if needed.
-			{
-				be := backend.FromContext(ctx)
-				ciLogger := log.FromContext(ctx).WithPrefix("ci")
-				ciStore := sqlstore.New(db)
-				ciSource := yamlworkflows.New(be)
-				ciDispatcher := httpdispatch.New(nil, cfg.HTTP.PublicURL)
-				ciTokens := cryptotokens.New()
-				ciClock := realclock.New()
-				ciSvc := ci.NewService(ci.DefaultConfig(), ciStore, ciSource, ciDispatcher, ciTokens, ciClock, ciLogger)
-				be.SetCIService(ciSvc)
-				webhook.SetFiredEventHandler(be.OnWebhookFired)
-				ciLogger.Info("ci subsystem wired")
-			}
+			webhook.SetFiredEventHandler(be.OnWebhookFired)
 
 			s, err := NewServer(ctx)
 			if err != nil {
@@ -285,30 +209,3 @@ echo "New SHA1: $newrev"
 
 exit 0
 `
-
-// serveRepoProvider wraps the Backend to implement backup.RepoProvider.
-type serveRepoProvider struct {
-	be *backend.Backend
-}
-
-// ListRepos returns all repositories known to the server.
-func (p *serveRepoProvider) ListRepos(ctx context.Context) ([]backup.RepoInfo, error) {
-	repos, err := p.be.Repositories(ctx)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]backup.RepoInfo, len(repos))
-	for i, r := range repos {
-		defaultBranch := "main" // fallback
-		if rr, err := r.Open(); err == nil {
-			if head, err := rr.HEAD(); err == nil {
-				defaultBranch = head.Name().Short()
-			}
-		}
-		result[i] = backup.RepoInfo{
-			Name:          r.Name(),
-			DefaultBranch: defaultBranch,
-		}
-	}
-	return result, nil
-}

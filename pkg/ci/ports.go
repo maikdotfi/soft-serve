@@ -91,6 +91,16 @@ type TokenGenerator interface {
 	NewToken() (string, error)
 }
 
+// RepoAccessChecker checks whether a user has write access to a
+// repository. The CI domain uses this to enforce per-repo ACLs on
+// run-control operations such as cancellation.
+//
+// Adapters should return (false, nil) when the user does not have
+// write access; a non-nil error indicates the check itself failed.
+type RepoAccessChecker interface {
+	CanWriteToRepo(ctx context.Context, username, repoName string) (bool, error)
+}
+
 // Clock is the time source for the service. Treated as an external
 // service per the project's ports + adapters rule.
 type Clock interface {

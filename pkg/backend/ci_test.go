@@ -51,8 +51,9 @@ func newTestCIServiceWith(store ci.Store, ws ci.WorkflowSource) *ci.Service {
 		ws,
 		stubDispatcher{},
 		stubTokens{},
+		nil, // RepoAccessChecker (nil = skip checks)
 		stubClock{},
-		nil,
+		nil, // logger
 	)
 }
 

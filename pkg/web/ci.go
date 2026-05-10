@@ -28,6 +28,7 @@ import (
 	"charm.land/log/v2"
 	"github.com/charmbracelet/soft-serve/pkg/backend"
 	"github.com/charmbracelet/soft-serve/pkg/ci"
+	"github.com/charmbracelet/soft-serve/pkg/proto"
 	"github.com/gorilla/mux"
 )
 
@@ -42,6 +43,9 @@ func CIController(_ context.Context, r *mux.Router) {
 	api.HandleFunc("/runs/{id:[0-9]+}/started", ciRunnerStarted).Methods(http.MethodPost)
 	api.HandleFunc("/runs/{id:[0-9]+}/completion", ciRunnerCompletion).Methods(http.MethodPost)
 	api.HandleFunc("/runs/{id:[0-9]+}/logs", ciRunnerLogLine).Methods(http.MethodPost)
+
+	// RunControl (authenticated user)
+	api.HandleFunc("/runs/{id:[0-9]+}/cancel", ciCancelRun).Methods(http.MethodPost)
 
 	// RunQueryAPI (read-only)
 	api.HandleFunc("/runs", ciListRuns).Methods(http.MethodGet)
@@ -128,6 +132,45 @@ func ciRunnerLogLine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// --- Run control handler --------------------------------------------
+
+func ciCancelRun(w http.ResponseWriter, r *http.Request) {
+	svc, ok := ciServiceOrUnavailable(w, r)
+	if !ok {
+		return
+	}
+	id, ok := ciRunIDFromPath(w, r)
+	if !ok {
+		return
+	}
+
+	user, err := authenticate(r)
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	userInfo := ci.UserInfo{
+		Role:     userRole(user),
+		Username: user.Username(),
+	}
+
+	if err := svc.CancelRun(r.Context(), userInfo, id); err != nil {
+		ciTranslateError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// userRole maps a proto.User to a CI-role string. Admins become
+// "admin"; all other authenticated users become "user".
+func userRole(u proto.User) string {
+	if u.IsAdmin() {
+		return "admin"
+	}
+	return "user"
 }
 
 // --- Run query handlers --------------------------------------------
@@ -337,6 +380,8 @@ func ciTranslateError(w http.ResponseWriter, r *http.Request, err error) {
 		http.Error(w, "run not found", http.StatusNotFound)
 	case errors.Is(err, ci.ErrInvalidTransition):
 		http.Error(w, "invalid run state for this operation", http.StatusConflict)
+	case errors.Is(err, ci.ErrNotAuthorized):
+		http.Error(w, "forbidden", http.StatusForbidden)
 	default:
 		ciInternal(w, r, err)
 	}

@@ -705,7 +705,7 @@ func TestService_CancelPendingRun_CancelsWithoutCallingRunner(t *testing.T) {
 	service, store, _, dispatcher, _, clock := newTestService(t)
 	run := store.insertRun(t, Run{RepoName: "repo1", RunsOn: "linux-amd64", Status: RunPending, CreatedAt: clock.Now()})
 
-	if err := service.CancelRun(ctx, UserInfo{Role: "writer"}, run.ID); err != nil {
+	if err := service.CancelRun(ctx, UserInfo{Role: "writer", Username: "writer"}, run.ID); err != nil {
 		t.Fatalf("cancel run: %v", err)
 	}
 
@@ -728,7 +728,7 @@ func TestService_CancelDispatchedRun_OnlyCancelsAfterRunnerAck(t *testing.T) {
 	run := store.insertRun(t, Run{RepoName: "repo1", RunsOn: "linux-amd64", Status: RunDispatched, CreatedAt: clock.Now()})
 
 	dispatcher.cancelErr = errors.New("runner cancel failed")
-	if err := service.CancelRun(ctx, UserInfo{Role: "writer"}, run.ID); !errors.Is(err, dispatcher.cancelErr) {
+	if err := service.CancelRun(ctx, UserInfo{Role: "writer", Username: "writer"}, run.ID); !errors.Is(err, dispatcher.cancelErr) {
 		t.Fatalf("cancel run error = %v, want %v", err, dispatcher.cancelErr)
 	}
 	if got := store.getRun(t, run.ID); got.Status != RunDispatched {
@@ -737,7 +737,7 @@ func TestService_CancelDispatchedRun_OnlyCancelsAfterRunnerAck(t *testing.T) {
 
 	dispatcher.cancelErr = nil
 	clock.Advance(time.Minute)
-	if err := service.CancelRun(ctx, UserInfo{Role: "writer"}, run.ID); err != nil {
+	if err := service.CancelRun(ctx, UserInfo{Role: "writer", Username: "writer"}, run.ID); err != nil {
 		t.Fatalf("cancel run after ack: %v", err)
 	}
 	got := store.getRun(t, run.ID)
@@ -746,6 +746,42 @@ func TestService_CancelDispatchedRun_OnlyCancelsAfterRunnerAck(t *testing.T) {
 	}
 	if got.FinishedAt == nil || !got.FinishedAt.Equal(clock.Now()) {
 		t.Fatalf("finished_at = %v, want %s", got.FinishedAt, clock.Now())
+	}
+}
+
+func TestService_CancelRun_RejectsUserWithoutWriteAccess(t *testing.T) {
+	ctx := context.Background()
+	store := newFakeStore()
+	ws := &fakeWorkflowSource{}
+	disp := &fakeRunnerDispatcher{}
+	tokens := &fakeTokenGenerator{}
+	access := &fakeRepoAccessChecker{}
+	clock := &fakeClock{now: testNow()}
+
+	service := NewService(DefaultConfig(), store, ws, disp, tokens, access, clock, nil)
+
+	run := store.insertRun(t, Run{RepoName: "myrepo", RunsOn: "linux-amd64", Status: RunPending, CreatedAt: clock.Now()})
+
+	// User without write access should be rejected.
+	err := service.CancelRun(ctx, UserInfo{Role: "user", Username: "bob"}, run.ID)
+	if !errors.Is(err, ErrNotAuthorized) {
+		t.Fatalf("cancel run error = %v, want %v", err, ErrNotAuthorized)
+	}
+
+	// Verify the run was NOT canceled.
+	got := store.getRun(t, run.ID)
+	if got.Status != RunPending {
+		t.Fatalf("status changed to %q, want pending", got.Status)
+	}
+
+	// User with writer username should succeed.
+	if err := service.CancelRun(ctx, UserInfo{Role: "writer", Username: "writer"}, run.ID); err != nil {
+		t.Fatalf("cancel run for writer: %v", err)
+	}
+
+	got = store.getRun(t, run.ID)
+	if got.Status != RunCanceled {
+		t.Fatalf("status = %q, want canceled", got.Status)
 	}
 }
 
@@ -824,7 +860,7 @@ func TestService_EnforceTimeouts_CancelAckWinsPickupTimeoutRace(t *testing.T) {
 	run := store.insertRun(t, Run{RepoName: "repo1", RunsOn: "linux-amd64", Status: RunDispatched, CreatedAt: clock.Now()})
 	clock.Advance(cfg.PickupTimeout)
 
-	if err := service.CancelRun(ctx, UserInfo{Role: "writer"}, run.ID); err != nil {
+	if err := service.CancelRun(ctx, UserInfo{Role: "writer", Username: "writer"}, run.ID); err != nil {
 		t.Fatalf("cancel run at timeout boundary: %v", err)
 	}
 	if err := service.EnforceTimeouts(ctx); err != nil {
@@ -896,8 +932,9 @@ func newTestService(t *testing.T) (*Service, *fakeStore, *fakeWorkflowSource, *f
 	workflowSource := &fakeWorkflowSource{}
 	dispatcher := &fakeRunnerDispatcher{}
 	tokens := &fakeTokenGenerator{next: "test-runner-token"}
+	access := &fakeRepoAccessChecker{allowAll: true}
 	clock := &fakeClock{now: testNow()}
-	service := NewService(DefaultConfig(), store, workflowSource, dispatcher, tokens, clock, nil)
+	service := NewService(DefaultConfig(), store, workflowSource, dispatcher, tokens, access, clock, nil)
 
 	return service, store, workflowSource, dispatcher, tokens, clock
 }
@@ -1223,6 +1260,22 @@ func cloneWorkflow(workflow Workflow) Workflow {
 		workflow.Triggers = triggers
 	}
 	return workflow
+}
+
+// fakeRepoAccessChecker implements RepoAccessChecker for tests.
+type fakeRepoAccessChecker struct {
+	allowAll bool
+}
+
+func (c *fakeRepoAccessChecker) CanWriteToRepo(_ context.Context, username, repoName string) (bool, error) {
+	if c.allowAll {
+		return true, nil
+	}
+	// By default, deny unless the username is "writer" or "admin".
+	if username == "writer" || username == "admin" {
+		return true, nil
+	}
+	return false, nil
 }
 
 func cloneRun(run Run) Run {
