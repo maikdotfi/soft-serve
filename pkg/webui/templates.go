@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/soft-serve/pkg/webui/backupbrowser"
 	"github.com/dustin/go-humanize"
 )
 
@@ -23,7 +24,7 @@ type pageTemplate struct {
 // that by parsing the layout + partials together with the page-specific
 // definition of "page".
 func loadTemplates(fsys embed.FS) (map[string]*pageTemplate, error) {
-	pages := []string{"repos", "repo", "tree", "blob", "log", "error"}
+	pages := []string{"repos", "repo", "tree", "blob", "log", "backups", "error"}
 	out := make(map[string]*pageTemplate, len(pages))
 
 	// Files that contribute partials shared across pages.
@@ -70,13 +71,21 @@ func parseFromFS(t *template.Template, fsys embed.FS, files ...string) (*templat
 // templateFuncs are the FuncMap available to every template.
 func templateFuncs() template.FuncMap {
 	return template.FuncMap{
-		"add":          func(a, b int) int { return a + b },
-		"shortdate":    shortDate,
-		"shorthash":    shortHash,
-		"humansize":    humanSize,
-		"linenumbered": lineNumbered,
-		"basename":     filepath.Base,
-		"dirname":      func(p string) string { d := filepath.Dir(p); if d == "." { return "" }; return d },
+		"add":               func(a, b int) int { return a + b },
+		"shortdate":         shortDate,
+		"shorthash":         shortHash,
+		"humansize":         humanSize,
+		"datetime":          dateTime,
+		"backupstatusclass": backupStatusClass,
+		"linenumbered":      lineNumbered,
+		"basename":          filepath.Base,
+		"dirname": func(p string) string {
+			d := filepath.Dir(p)
+			if d == "." {
+				return ""
+			}
+			return d
+		},
 	}
 }
 
@@ -102,6 +111,24 @@ func humanSize(n int64) string {
 		return "—"
 	}
 	return humanize.IBytes(uint64(n))
+}
+
+func dateTime(t time.Time) string {
+	if t.IsZero() {
+		return "—"
+	}
+	return t.UTC().Format("2006-01-02 15:04 UTC")
+}
+
+func backupStatusClass(status backupbrowser.Status) string {
+	switch status {
+	case backupbrowser.StatusStored:
+		return "tag--branch"
+	case backupbrowser.StatusFailed:
+		return "tag--fail"
+	default:
+		return "tag--warn"
+	}
 }
 
 // lineNumbered returns HTML-safe gutter-numbered code from a byte slice.

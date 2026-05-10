@@ -6,7 +6,11 @@ import (
 
 	"charm.land/log/v2"
 	"github.com/charmbracelet/soft-serve/pkg/backend"
+	backupstoreadapter "github.com/charmbracelet/soft-serve/pkg/backup/adapters/store"
+	"github.com/charmbracelet/soft-serve/pkg/db"
+	"github.com/charmbracelet/soft-serve/pkg/store"
 	"github.com/charmbracelet/soft-serve/pkg/webui"
+	webuibackupstore "github.com/charmbracelet/soft-serve/pkg/webui/backupbrowser/storeadapter"
 	"github.com/charmbracelet/soft-serve/pkg/webui/repobrowser/softserveadapter"
 	"github.com/gorilla/mux"
 )
@@ -24,7 +28,12 @@ func WebUIController(ctx context.Context, r *mux.Router) {
 	}
 
 	browser := softserveadapter.New(be)
-	handler, err := webui.NewHandler(browser, webui.WithBasePath("/ui"))
+	opts := []webui.Option{webui.WithBasePath("/ui")}
+	if dbx, datastore := db.FromContext(ctx), store.FromContext(ctx); dbx != nil && datastore != nil {
+		backupStore := backupstoreadapter.NewStoreAdapter(dbx, datastore)
+		opts = append(opts, webui.WithBackupReader(webuibackupstore.New(backupStore)))
+	}
+	handler, err := webui.NewHandler(browser, opts...)
 	if err != nil {
 		log.FromContext(ctx).Error("webui: failed to construct handler", "err", err)
 		return

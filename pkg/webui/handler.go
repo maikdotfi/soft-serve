@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/soft-serve/pkg/webui/backupbrowser"
 	"github.com/charmbracelet/soft-serve/pkg/webui/repobrowser"
 	"github.com/gorilla/mux"
 )
@@ -18,6 +19,7 @@ import (
 // Handler is the read-only repository browser.
 type Handler struct {
 	browser      repobrowser.Browser
+	backups      backupbrowser.Reader
 	basePath     string
 	maxBlobBytes int64
 	tmpls        map[string]*pageTemplate
@@ -27,10 +29,11 @@ type Handler struct {
 // pageData is the common envelope every page receives. Page-specific data
 // is added with the embedded fields below.
 type pageData struct {
-	Title     string
-	BasePath  string
-	RepoCount int
-	Now       string
+	Title      string
+	BasePath   string
+	RepoCount  int
+	Now        string
+	HasBackups bool
 
 	// Repo-scoped fields populated for repo/tree/blob/log pages.
 	Repo       repobrowser.RepoInfo
@@ -44,6 +47,7 @@ type pageData struct {
 	Tree    []repobrowser.TreeEntry
 	Blob    repobrowser.Blob
 	Commits []repobrowser.CommitInfo
+	Backup  backupbrowser.Overview
 
 	// error.html only.
 	Code   string
@@ -56,6 +60,9 @@ func (h *Handler) routes() http.Handler {
 	r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.FS(h.staticFS))))
 
 	r.HandleFunc("/", h.handleIndex).Methods(http.MethodGet)
+	if h.backups != nil {
+		r.HandleFunc("/backups", h.handleBackups).Methods(http.MethodGet)
+	}
 	r.HandleFunc("/r/{name}", h.handleRepo).Methods(http.MethodGet)
 	r.HandleFunc("/r/{name}/tree/{ref}", h.handleTree).Methods(http.MethodGet)
 	r.HandleFunc("/r/{name}/tree/{ref}/{path:.*}", h.handleTree).Methods(http.MethodGet)
@@ -80,6 +87,21 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	data := h.envelope("index", len(repos))
 	data.Repos = repos
 	h.render(w, r, "repos", data)
+}
+
+func (h *Handler) handleBackups(w http.ResponseWriter, r *http.Request) {
+	if h.backups == nil {
+		h.notFound(w, r, "page not found", r.URL.Path)
+		return
+	}
+	overview, err := h.backups.Overview(r.Context())
+	if err != nil {
+		h.serverError(w, r, err)
+		return
+	}
+	data := h.envelope("backups", h.repoCount(r.Context()))
+	data.Backup = overview
+	h.render(w, r, "backups", data)
 }
 
 func (h *Handler) handleRepo(w http.ResponseWriter, r *http.Request) {
@@ -233,10 +255,11 @@ func (h *Handler) repoCount(ctx context.Context) int {
 
 func (h *Handler) envelope(title string, repoCount int) pageData {
 	return pageData{
-		Title:     title,
-		BasePath:  h.basePath,
-		RepoCount: repoCount,
-		Now:       time.Now().UTC().Format("2006-01-02 15:04 UTC"),
+		Title:      title,
+		BasePath:   h.basePath,
+		RepoCount:  repoCount,
+		Now:        time.Now().UTC().Format("2006-01-02 15:04 UTC"),
+		HasBackups: h.backups != nil,
 	}
 }
 

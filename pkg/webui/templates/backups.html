@@ -1,0 +1,51 @@
+{{define "page"}}
+<section class="hero">
+  <h1 class="hero__title">Backups</h1>
+  <p class="hero__sub">
+    <span class="kbd">$</span> backup status
+    <span class="hero__meta">— {{len .Backup.Records}} attempts</span>
+  </p>
+</section>
+
+<section class="repohead">
+  <div class="repohead__meta">
+    <span class="metaitem"><span class="metaitem__k">last stored</span><span class="metaitem__v">{{datetime .Backup.LastStoredAt}}</span></span>
+    <span class="metaitem"><span class="metaitem__k">last failed</span><span class="metaitem__v">{{datetime .Backup.LastFailedAt}}</span></span>
+    <span class="metaitem"><span class="metaitem__k">next run</span><span class="metaitem__v">{{if .Backup.HasSchedule}}{{datetime .Backup.NextRunAt}}{{else}}—{{end}}</span></span>
+  </div>
+</section>
+
+<section class="panel panel--full">
+  <div class="panel__title">
+    <span class="panel__lead">[ backup attempts ]</span>
+  </div>
+  {{if .Backup.Records}}
+  <div class="dirlisting">
+    <table class="dirtable">
+      <thead>
+        <tr>
+          <th>status</th>
+          <th>kind</th>
+          <th>target</th>
+          <th>created</th>
+          <th>retries</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Backup.Records}}
+        <tr>
+          <td><span class="tag {{backupstatusclass .Status}}">{{.Status}}</span></td>
+          <td>{{.Kind}}</td>
+          <td>{{if .RepoName}}{{.RepoName}}{{else}}server{{end}}</td>
+          <td>{{datetime .CreatedAt}}</td>
+          <td>{{.RetryCount}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}
+  <div class="empty">// no backup attempts recorded</div>
+  {{end}}
+</section>
+{{end}}
