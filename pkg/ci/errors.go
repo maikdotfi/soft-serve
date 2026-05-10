@@ -32,4 +32,8 @@ var (
 	// ErrRunNotFound is returned when looking up a run by ID and no
 	// run exists.
 	ErrRunNotFound = errors.New("ci: run not found")
+
+	// ErrNotAuthorized is returned when a caller does not have
+	// write access to the repository the run belongs to.
+	ErrNotAuthorized = errors.New("ci: not authorized")
 )

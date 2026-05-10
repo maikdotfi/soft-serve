@@ -19,6 +19,7 @@ import (
 	"github.com/charmbracelet/soft-serve/pkg/config"
 	"github.com/charmbracelet/soft-serve/pkg/db"
 	"github.com/charmbracelet/soft-serve/pkg/db/migrate"
+	"github.com/charmbracelet/soft-serve/pkg/proto"
 	"github.com/charmbracelet/soft-serve/pkg/store/database"
 	"github.com/gorilla/mux"
 	"github.com/matryer/is"
@@ -70,7 +71,7 @@ func newCITestEnv(t *testing.T) *ciTestEnv {
 	disp := stubCIDispatcher{}
 	tokens := stubCITokens{}
 	clock := stubCIClock{}
-	svc := ci.NewService(ci.DefaultConfig(), store, ws, disp, tokens, clock, nil)
+	svc := ci.NewService(ci.DefaultConfig(), store, ws, disp, tokens, nil, clock, nil)
 	be.SetCIService(svc)
 
 	router := mux.NewRouter()
@@ -222,6 +223,64 @@ func TestCIQueryRunsRoute(t *testing.T) {
 	is.NoErr(json.NewDecoder(rr.Body).Decode(&got))
 	is.Equal(len(got), 1)
 	is.Equal(got[0]["workflow_name"], "unit")
+}
+
+// TestCICancelRunRoute verifies POST /api/v1/ci/runs/{id}/cancel
+// authenticates the user and cancels a pending run.
+func TestCICancelRunRoute(t *testing.T) {
+	is := is.New(t)
+	env := newCITestEnv(t)
+
+	// Create an admin user that will be used for auth.
+	user, err := env.be.CreateUser(env.ctx, "testadmin", proto.UserOptions{Admin: true})
+	is.NoErr(err)
+
+	token, err := env.be.CreateAccessToken(env.ctx, user, "test-token", time.Now().Add(24*time.Hour))
+	is.NoErr(err)
+
+	// Create a pending run.
+	created, err := env.store.CreateRun(env.ctx, ci.Run{
+		RepoName: "repo1", WorkflowName: "unit", RunsOn: "linux-amd64",
+		Script: "go test", Status: ci.RunPending, TriggeredByEvent: ci.EventTypePush,
+	})
+	is.NoErr(err)
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v1/ci/runs/"+strconv.FormatInt(created.ID, 10)+"/cancel", nil)
+	req.Header.Set("Authorization", "Token "+token)
+	rr := httptest.NewRecorder()
+	env.router.ServeHTTP(rr, req)
+
+	is.Equal(rr.Code, http.StatusOK)
+
+	got, err := env.store.GetRun(env.ctx, created.ID)
+	is.NoErr(err)
+	is.Equal(got.Status, ci.RunCanceled)
+}
+
+// TestCICancelRunRoute_RejectsUnauthenticated verifies that a request
+// without an Authorization header returns 401.
+func TestCICancelRunRoute_RejectsUnauthenticated(t *testing.T) {
+	is := is.New(t)
+	env := newCITestEnv(t)
+
+	created, err := env.store.CreateRun(env.ctx, ci.Run{
+		RepoName: "repo1", WorkflowName: "unit", RunsOn: "linux-amd64",
+		Script: "go test", Status: ci.RunPending, TriggeredByEvent: ci.EventTypePush,
+	})
+	is.NoErr(err)
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v1/ci/runs/"+strconv.FormatInt(created.ID, 10)+"/cancel", nil)
+	rr := httptest.NewRecorder()
+	env.router.ServeHTTP(rr, req)
+
+	is.Equal(rr.Code, http.StatusUnauthorized)
+
+	// Verify the run was NOT canceled.
+	got, err := env.store.GetRun(env.ctx, created.ID)
+	is.NoErr(err)
+	is.Equal(got.Status, ci.RunPending)
 }
 
 // stubs ---------------------------------------------------------------

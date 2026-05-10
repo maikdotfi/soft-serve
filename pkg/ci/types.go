@@ -106,8 +106,10 @@ type RepoInfo struct {
 
 // UserInfo identifies a user at the boundary of the CI domain. Role
 // distinguishes admins (who may register runners) from other users.
+// Username is the user's login name, used for repo access checks.
 type UserInfo struct {
-	Role string
+	Role     string
+	Username string
 }
 
 // RunnerRegistration is a runner the admin has registered with the
