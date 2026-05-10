@@ -42,10 +42,10 @@ var (
 				return ErrInternalServerError
 			}
 
-			// The hook subprocess must wire the same optional services
-			// the server wires; otherwise the post-receive guards
-			// (b.backup == nil, b.ci == nil) silently no-op and
-			// push-triggered backups / workflow sync never run.
+			// The hook subprocess wires the CI service so pre-receive
+			// workflow validation has access to it. Backup is not wired
+			// here — backup is schedule-only and runs in the
+			// long-running serve process.
 			ctx := c.Context()
 			if err := cmd.WireOptionalServices(
 				ctx,

@@ -17,14 +17,14 @@ import (
 // BackupService orchestrates all backup and restore operations.
 // It depends only on port interfaces, never on adapter packages.
 type BackupService struct {
-	cfg       BackupConfig
-	store     BackupStore
-	s3        S3Provider
-	bundler   BundleProvider
-	snapshot  SnapshotDataProvider
-	repos     RepoProvider
-	clock     Clock
-	logger    *log.Logger
+	cfg      BackupConfig
+	store    BackupStore
+	s3       S3Provider
+	bundler  BundleProvider
+	snapshot SnapshotDataProvider
+	repos    RepoProvider
+	clock    Clock
+	logger   *log.Logger
 }
 
 // NewBackupService creates a new BackupService.
@@ -53,6 +53,8 @@ func NewBackupService(
 	}
 }
 
+
+
 // --- Schedule operations ---
 
 // CreateDefaultBackupSchedule creates the default BackupSchedule if one
@@ -69,22 +71,6 @@ func (s *BackupService) CreateDefaultBackupSchedule(ctx context.Context) error {
 	if err := s.store.SetBackupScheduleNextRunAt(ctx, nextRunAt); err != nil {
 		return fmt.Errorf("creating default backup schedule: %w", err)
 	}
-	return nil
-}
-
-// --- Repo backup: push-triggered (rule CreateRepoBackupOnPush) ---
-
-// HandlePushToDefaultBranch is called when a push to the default branch is
-// detected. Per spec rule CreateRepoBackupOnPush: creates a RepoBackup with
-// status=uploading, then starts the upload process asynchronously.
-func (s *BackupService) HandlePushToDefaultBranch(ctx context.Context, repoName string) error {
-	s.logger.Info("push to default branch detected, creating repo backup", "repo", repoName)
-	backup, err := s.store.CreateRepoBackup(ctx, repoName, s.clock.Now())
-	if err != nil {
-		return fmt.Errorf("creating repo backup for %s: %w", repoName, err)
-	}
-	// Start the upload asynchronously
-	go s.uploadRepoBackup(context.Background(), backup)
 	return nil
 }
 
@@ -130,20 +116,19 @@ func (s *BackupService) Tick(ctx context.Context) error {
 		go s.uploadServerSnapshot(context.Background(), snapshot)
 	}
 
-	// CreateScheduledRepoBackups rule (only if backup_repos_on_schedule = true)
-	if s.cfg.BackupReposOnSchedule {
-		repos, err := s.repos.ListRepos(ctx)
-		if err != nil {
-			s.logger.Error("failed to list repos for scheduled backup", "err", err)
-		} else {
-			for _, repo := range repos {
-				backup, err := s.store.CreateRepoBackup(ctx, repo.Name, now)
-				if err != nil {
-					s.logger.Error("failed to create scheduled repo backup", "repo", repo.Name, "err", err)
-					continue
-				}
-				go s.uploadRepoBackup(context.Background(), backup)
+	// CreateScheduledRepoBackups rule: every schedule fire backs up every repo.
+	repos, err := s.repos.ListRepos(ctx)
+	if err != nil {
+		s.logger.Error("failed to list repos for scheduled backup", "err", err)
+	} else {
+		for _, repo := range repos {
+			backup, err := s.store.CreateRepoBackup(ctx, repo.Name, now)
+			if err != nil {
+				s.logger.Error("failed to create scheduled repo backup", "repo", repo.Name, "err", err)
+				continue
 			}
+			b := backup
+			go s.uploadRepoBackup(context.Background(), b)
 		}
 	}
 

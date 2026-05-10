@@ -64,16 +64,15 @@ func (j backupJob) Func(ctx context.Context) func() {
 			return
 		}
 		backupCfg := backup.BackupConfig{
-			S3Endpoint:           cfgResult.S3Endpoint,
-			S3Bucket:             cfgResult.S3Bucket,
-			S3Region:             cfgResult.S3Region,
-			S3PathPrefix:          cfgResult.S3PathPrefix,
-			ScheduleInterval:     cfgResult.ScheduleInterval,
-			MaxRepoBackups:       cfgResult.MaxRepoBackups,
-			MaxServerSnapshots:    cfgResult.MaxServerSnapshots,
-			MaxUploadRetries:      cfgResult.MaxUploadRetries,
-			UploadTimeout:         cfgResult.UploadTimeout,
-			BackupReposOnSchedule: cfgResult.BackupReposOnSchedule,
+			S3Endpoint:         cfgResult.S3Endpoint,
+			S3Bucket:           cfgResult.S3Bucket,
+			S3Region:           cfgResult.S3Region,
+			S3PathPrefix:       cfgResult.S3PathPrefix,
+			ScheduleInterval:   cfgResult.ScheduleInterval,
+			MaxRepoBackups:     cfgResult.MaxRepoBackups,
+			MaxServerSnapshots: cfgResult.MaxServerSnapshots,
+			MaxUploadRetries:   cfgResult.MaxUploadRetries,
+			UploadTimeout:      cfgResult.UploadTimeout,
 		}
 
 		// Check minimum configuration

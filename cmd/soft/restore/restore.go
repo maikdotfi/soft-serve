@@ -63,16 +63,15 @@ func runRestore(c *cobra.Command, _ []string) error {
 		return fmt.Errorf("invalid backup configuration: %w", err)
 	}
 	backupCfg := backup.BackupConfig{
-		S3Endpoint:           cfgResult.S3Endpoint,
-		S3Bucket:             cfgResult.S3Bucket,
-		S3Region:             cfgResult.S3Region,
-		S3PathPrefix:          cfgResult.S3PathPrefix,
-		ScheduleInterval:     cfgResult.ScheduleInterval,
-		MaxRepoBackups:       cfgResult.MaxRepoBackups,
-		MaxServerSnapshots:    cfgResult.MaxServerSnapshots,
-		MaxUploadRetries:      cfgResult.MaxUploadRetries,
-		UploadTimeout:         cfgResult.UploadTimeout,
-		BackupReposOnSchedule: cfgResult.BackupReposOnSchedule,
+		S3Endpoint:         cfgResult.S3Endpoint,
+		S3Bucket:           cfgResult.S3Bucket,
+		S3Region:           cfgResult.S3Region,
+		S3PathPrefix:       cfgResult.S3PathPrefix,
+		ScheduleInterval:   cfgResult.ScheduleInterval,
+		MaxRepoBackups:     cfgResult.MaxRepoBackups,
+		MaxServerSnapshots: cfgResult.MaxServerSnapshots,
+		MaxUploadRetries:   cfgResult.MaxUploadRetries,
+		UploadTimeout:      cfgResult.UploadTimeout,
 	}
 
 	// Open database

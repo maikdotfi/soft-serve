@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Soft Serve — Git Hook Subprocess Architecture</title>
+<style>
+  :root {
+    --bg: #1a1a2e;
+    --surface: #16213e;
+    --surface2: #1e2a4a;
+    --border: #2a3a5c;
+    --text: #e0e0e0;
+    --text-dim: #8892a0;
+    --accent: #64ffda;
+    --orange: #ffb347;
+    --pink: #ff6b9d;
+    --blue: #4fc3f7;
+    --red: #ef5350;
+    --green: #66bb6a;
+    --purple: #b39ddb;
+    --yellow: #ffd54f;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    padding: 2rem;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+  h1 {
+    font-size: 1.8rem;
+    margin-bottom: 0.3rem;
+    color: var(--accent);
+  }
+  .subtitle {
+    color: var(--text-dim);
+    font-size: 0.95rem;
+    margin-bottom: 2rem;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 1rem;
+  }
+  h2 {
+    font-size: 1.2rem;
+    margin: 1.8rem 0 0.8rem;
+    color: var(--orange);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  h3 {
+    font-size: 1rem;
+    margin: 1.2rem 0 0.4rem;
+    color: var(--blue);
+  }
+
+  /* Diagram */
+  .diagram-wrapper {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.5rem;
+    margin: 1.2rem 0;
+    overflow-x: auto;
+  }
+  .diagram {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.6rem;
+    font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+    font-size: 0.85rem;
+    min-width: 700px;
+  }
+  .diagram .row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    justify-content: center;
+  }
+  .diagram .box {
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    text-align: center;
+    white-space: nowrap;
+  }
+  .diagram .box.client {
+    background: #2a1a3e;
+    border-color: var(--purple);
+    color: var(--purple);
+  }
+  .diagram .box.daemon {
+    background: #1a2a3e;
+    border-color: var(--blue);
+    color: var(--blue);
+  }
+  .diagram .box.subprocess {
+    background: #2a2a1e;
+    border-color: var(--orange);
+    color: var(--orange);
+  }
+  .diagram .box.subprocess-ci {
+    background: #1e2a1e;
+    border-color: var(--green);
+    color: var(--green);
+  }
+  .diagram .box.subprocess-backup {
+    background: #2a1e1e;
+    border-color: var(--pink);
+    color: var(--pink);
+  }
+  .diagram .arrow {
+    color: var(--text-dim);
+    font-size: 1.2rem;
+    flex-shrink: 0;
+  }
+  .diagram .arrow-label {
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    text-align: center;
+    margin-top: -0.3rem;
+  }
+  .diagram .indent {
+    padding-left: 3rem;
+  }
+  .diagram .label-line {
+    color: var(--text-dim);
+    font-size: 0.75rem;
+    padding-left: 1rem;
+  }
+  .diagram .brace {
+    color: var(--text-dim);
+    font-size: 0.75rem;
+  }
+  .diagram .gap { height: 0.3rem; }
+
+  /* Highlight box */
+  .callout {
+    background: var(--surface);
+    border-left: 3px solid var(--orange);
+    padding: 0.8rem 1rem;
+    border-radius: 0 6px 6px 0;
+    margin: 1rem 0;
+    font-size: 0.92rem;
+  }
+  .callout.green { border-left-color: var(--green); }
+  .callout.blue { border-left-color: var(--blue); }
+  .callout.pink { border-left-color: var(--pink); }
+  .callout strong { color: var(--accent); }
+
+  /* Toggle groups */
+  .toggle-group {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin: 0.8rem 0;
+    overflow: hidden;
+  }
+  .toggle-header {
+    padding: 0.7rem 1rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    user-select: none;
+    font-weight: 600;
+    font-size: 0.95rem;
+  }
+  .toggle-header:hover { background: rgba(255,255,255,0.03); }
+  .toggle-header .arrow-icon {
+    transition: transform 0.2s;
+    font-size: 0.8rem;
+  }
+  .toggle-header.open .arrow-icon { transform: rotate(90deg); }
+  .toggle-body {
+    padding: 0 1rem 0.8rem;
+    display: none;
+    font-size: 0.9rem;
+    color: var(--text-dim);
+  }
+  .toggle-body.open { display: block; }
+  .toggle-body code, .code {
+    background: var(--surface2);
+    padding: 0.1em 0.4em;
+    border-radius: 3px;
+    font-family: 'SF Mono', 'Cascadia Code', monospace;
+    font-size: 0.85em;
+    color: var(--yellow);
+  }
+  .toggle-body pre {
+    background: var(--surface2);
+    padding: 0.6rem 0.8rem;
+    border-radius: 5px;
+    overflow-x: auto;
+    margin: 0.5rem 0;
+    font-size: 0.8rem;
+    border: 1px solid var(--border);
+  }
+
+  /* Legend */
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    margin: 0.8rem 0 1.5rem;
+    font-size: 0.82rem;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .legend-swatch {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+  }
+
+  /* Table */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+    margin: 0.8rem 0;
+  }
+  th, td {
+    padding: 0.5rem 0.7rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  th {
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  td { color: var(--text-dim); }
+  td.yes { color: var(--green); font-weight: 600; }
+  td.no { color: var(--red); }
+  tr:hover td { color: var(--text); }
+
+  .note {
+    font-size: 0.82rem;
+    color: var(--text-dim);
+    font-style: italic;
+    margin: 0.5rem 0;
+  }
+</style>
+</head>
+<body>
+
+<h1>🔧 Soft Serve: Git Hook Subprocess Architecture</h1>
+<p class="subtitle">
+  Why every <code>git push</code> spawns a fresh <code>soft hook</code> process — and what that means for CI, backups, and webhooks.
+</p>
+
+<!-- ===== LEGEND ===== -->
+<div class="legend">
+  <span class="legend-item"><span class="legend-swatch" style="background:#2a1a3e;border-color:var(--purple)"></span> Client</span>
+  <span class="legend-item"><span class="legend-swatch" style="background:#1a2a3e;border-color:var(--blue)"></span> <code>soft serve</code> daemon</span>
+  <span class="legend-item"><span class="legend-swatch" style="background:#2a2a1e;border-color:var(--orange)"></span> Hook subprocess</span>
+  <span class="legend-item"><span class="legend-swatch" style="background:#1e2a1e;border-color:var(--green)"></span> CI work</span>
+  <span class="legend-item"><span class="legend-swatch" style="background:#2a1e1e;border-color:var(--pink)"></span> Backup work</span>
+</div>
+
+<!-- ===== THE CORE REASON ===== -->
+<h2>⚡ The core constraint</h2>
+
+<p style="color:var(--text-dim);font-size:0.92rem;">
+  Git's server-side hooks (<code>pre-receive</code>, <code>update</code>, <code>post-receive</code>, <code>post-update</code>)
+  are always spawned as <strong>standalone child processes</strong> by <code>git-receive-pack</code>.
+  Git <code>exec()</code>s a script — it does <em>not</em> call a function inside the running server.
+  Soft Serve has no choice: every hook <strong>must</strong> be a subprocess.
+</p>
+
+<div class="callout">
+  <strong>Key design property:</strong> The <code>soft hook</code> subprocess is a <em>complete, self-contained Go binary invocation</em>.
+  Each invocation opens the database, wires up the backend + backup + CI services, performs its work, and exits.
+  It is <strong>not</strong> an RPC call to the <code>soft serve</code> daemon — it is an independent process.
+</div>
+
+<!-- ===== FULL FLOW DIAGRAM ===== -->
+<h2>📊 What happens on <code>git push</code></h2>
+
+<div class="diagram-wrapper">
+<div class="diagram">
+
+  <!-- Client -->
+  <div class="row">
+    <div class="box client">git push</div>
+    <span class="arrow">→</span>
+    <div class="box daemon">soft serve (git-receive-pack)</div>
+  </div>
+
+  <div class="row" style="margin-top:0.3rem">
+    <span class="arrow" style="visibility:hidden">→</span>
+    <span class="label-line" style="padding-left:13.5rem;font-size:0.7rem">┌── Git spawns 3 separate hook processes ──┐</span>
+  </div>
+
+  <!-- Pre-receive -->
+  <div class="row indent">
+    <span class="arrow">↳</span>
+    <div class="box subprocess">exec: repo.git/hooks/<br>pre-receive</div>
+    <span class="arrow">→</span>
+    <div class="box subprocess">exec: hooks/pre-receive.d/<br>soft-serve</div>
+    <span class="arrow">→</span>
+    <div class="box subprocess-ci" style="font-size:0.78rem">
+      <strong>soft hook pre-receive</strong><br>
+      ↓ open DB, wire services<br>
+      ↓ CIPreReceive: validate<br>
+      &nbsp;&nbsp;workflow YAML parse<br>
+      ↓ PreReceive (webhooks)
+    </div>
+    <span class="arrow" style="color:var(--green)">✓</span>
+  </div>
+  <div class="row" style="font-size:0.72rem;color:var(--text-dim);margin-top:-0.3rem">
+    <span style="visibility:hidden">↳</span>
+    <span style="padding-left:7.5rem">
+      Parse error → write to stderr → exit non-zero → <span style="color:var(--red)">push REJECTED</span>
+    </span>
+  </div>
+
+  <div class="gap"></div>
+
+  <!-- Git processes the push -->
+  <div class="row indent">
+    <span class="arrow">→</span>
+    <div class="box daemon" style="background:#0a1a2e;border-color:var(--blue);font-size:0.8rem">
+      Git applies refs<br>
+      (push accepted)
+    </div>
+  </div>
+
+  <div class="gap"></div>
+
+  <!-- Post-receive -->
+  <div class="row indent">
+    <span class="arrow">↳</span>
+    <div class="box subprocess">exec: repo.git/hooks/<br>post-receive</div>
+    <span class="arrow">→</span>
+    <div class="box subprocess">exec: hooks/post-receive.d/<br>soft-serve</div>
+    <span class="arrow">→</span>
+    <div class="box subprocess-ci" style="font-size:0.78rem">
+      <strong>soft hook post-receive</strong><br>
+      ↓ open DB, wire services<br>
+      ↓ PostReceive: trigger backup<br>
+      ↓ CIPostReceive: sync workflows<br>
+      ↓ Wait() for async uploads
+    </div>
+    <span class="arrow" style="color:var(--green)">✓</span>
+  </div>
+  <div class="row" style="font-size:0.7rem;color:var(--text-dim);margin-top:-0.3rem;padding-left:2rem">
+    The push has already been accepted; failures are logged, not returned to client.
+  </div>
+
+</div>
+</div>
+
+<!-- ===== WHY A SUBPROCESS ===== -->
+<h2>🎯 Why a subprocess — not an RPC or socket</h2>
+
+<p style="color:var(--text-dim);font-size:0.92rem;">
+  Other Git servers (Gitea, GitLab) use the same pattern: the hook script contacts the
+  running server via HTTP/socket. Soft Serve <strong>re-initializes the entire backend</strong>
+  in a new process instead. Why?
+</p>
+
+<div class="toggle-group">
+  <div class="toggle-header open" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">
+    <span class="arrow-icon">▶</span>
+    <span>Simplicity — no extra server surface</span>
+  </div>
+  <div class="toggle-body open">
+    <p>No need for an admin RPC endpoint, authentication for hooks, or connection management.
+    The hook subprocess just opens the database directly (same SQLite/Postgres file the daemon uses)
+    and does its work. This means hooks work even if the HTTP/SSH server is down or restarting.</p>
+  </div>
+</div>
+
+<div class="toggle-group">
+  <div class="toggle-header" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">
+    <span class="arrow-icon">▶</span>
+    <span>Transactional consistency — each hook is self-contained</span>
+  </div>
+  <div class="toggle-body">
+    <p>The subprocess opens its own DB connection, reads current state, performs validation/work,
+    and commits within a single transaction scope. There is no shared mutable state with the
+    daemon process to get wrong.</p>
+  </div>
+</div>
+
+<div class="toggle-group">
+  <div class="toggle-header" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">
+    <span class="arrow-icon">▶</span>
+    <span>No long-lived connection to manage</span>
+  </div>
+  <div class="toggle-body">
+    <p>No WebSocket, no gRPC stream, no HTTP keep-alive between daemon and hook.
+    The subprocess is ephemeral: start, work, report exit code to Git, die. If the
+    daemon restarts mid-push, the hook subprocess is unaffected.</p>
+  </div>
+</div>
+
+<div class="toggle-group">
+  <div class="toggle-header" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">
+    <span class="arrow-icon">▶</span>
+    <span>Downside: repeated initialization cost</span>
+  </div>
+  <div class="toggle-body">
+    <p>Each hook subprocess pays the full startup cost: Go runtime init, DB connection open,
+    service wiring. On a push that updates 3 refs, this means 3× pre-receive + 3× update +
+    3× post-receive = up to 9 subprocess invocations. Soft Serve mitigates this by using
+    SQLite (fast local file, connection in ~1ms) and keeping service wiring lightweight,
+    but it's still a non-zero overhead per push.</p>
+    <p style="margin-top:0.4rem">The project <code>AGENTS.md</code> mentions this as a potential future improvement — see the
+    "TODO: run this async" comment in <code>pkg/backend/hooks.go</code> and the note about
+    "an RPC server to communicate with the hook process".</p>
+  </div>
+</div>
+
+<!-- ===== CI HOOKS ===== -->
+<h2>🔁 How CI fits into this</h2>
+
+<p style="color:var(--text-dim);font-size:0.92rem;">
+  The CI subsystem runs along two separate paths. Only one requires a subprocess.
+</p>
+
+<h3>📥 Path A: Push-triggered (in hook subprocess)</h3>
+<div class="callout green" style="margin-top:0">
+  <strong>Must run in a subprocess</strong> because it lives inside Git's hook chain.
+</div>
+
+<p style="color:var(--text-dim);font-size:0.9rem;">
+  When a user pushes, two CI operations execute inside the hook subprocess:
+</p>
+
+<table>
+  <tr>
+    <th style="width:22%">Operation</th>
+    <th style="width:18%">Runs in</th>
+    <th>What it does</th>
+  </tr>
+  <tr>
+    <td><code>CIPreReceive</code></td>
+    <td class="yes">hook pre-receive</td>
+    <td>Parses <code>.soft-serve/workflows/*.yml</code> from the <em>incoming commit tree</em>.
+        If the YAML is unparseable, writes error to stderr and exits non-zero →
+        <strong>push is rejected</strong> before any refs are updated.</td>
+  </tr>
+  <tr>
+    <td><code>CIPostReceive</code></td>
+    <td class="yes">hook post-receive</td>
+    <td>Reconciles the stored <code>Workflow</code> set with what's now at HEAD
+        (the push was already accepted). Upserts new workflows, deletes removed ones.
+        Failures are logged but do not affect the client.</td>
+  </tr>
+</table>
+
+<div class="callout blue" style="margin:0.5rem 0">
+  <strong>Code path:</strong> <code>cmd/soft/hook/hook.go</code> lines 83–89:
+  <pre style="margin:0.4rem 0 0">case hooks.PreReceiveHook:
+    if err := hks.CIPreReceive(ctx, repoName, opts, stderr); err != nil {
+        return err   // non-zero exit → git rejects the push
+    }
+    hks.PreReceive(ctx, stdout, stderr, repoName, opts)
+case hooks.PostReceiveHook:
+    hks.PostReceive(ctx, stdout, stderr, repoName, opts)
+    hks.CIPostReceive(ctx, repoName, opts)</pre>
+</div>
+
+<h3>📤 Path B: Webhook-triggered (in daemon process)</h3>
+<div class="callout blue" style="margin-top:0">
+  <strong>Runs in the <code>soft serve</code> daemon</strong> — no subprocess needed.
+</div>
+
+<p style="color:var(--text-dim);font-size:0.9rem;">
+  When non-push events fire (branch/tag creation, collaborator changes, repo visibility changes),
+  the in-process webhook handler fans them out into pending CI runs.
+  This is registered only in <code>serve.go</code>, not in the hook subprocess:
+</p>
+
+<div class="callout blue" style="margin:0.5rem 0">
+  <strong>Code path:</strong> <code>cmd/soft/serve/serve.go</code> line 79:
+  <pre style="margin:0.4rem 0 0">webhook.SetFiredEventHandler(be.OnWebhookFired)</pre>
+  <code>cmd/services.go</code> comment lines 21–25:
+  <pre style="margin:0.4rem 0 0">// Side-effects intentionally NOT performed here, because they are
+// serve-process-only:
+//   - svc.CreateDefaultBackupSchedule: scheduled (cron) backups ...
+//   - webhook.SetFiredEventHandler: the in-process webhook fan-out only
+//     runs in the server.</pre>
+</div>
+
+<!-- ===== WHAT ABOUT BACKUPS? ===== -->
+<h2>💾 Backup also splits across both paths</h2>
+
+<table>
+  <tr>
+    <th>Trigger</th>
+    <th>Subprocess?</th>
+    <th>Details</th>
+  </tr>
+  <tr>
+    <td>Push to default branch</td>
+    <td class="yes">Yes (post-receive hook)</td>
+    <td><code>PostReceive</code> calls <code>backup.HandlePushToDefaultBranch</code>.
+        The subprocess must call <code>svc.Wait()</code> before exiting (see <code>PersistentPostRunE</code> in <code>cmd/soft/hook/hook.go</code>)
+        or the S3 upload goroutine gets killed mid-flight.</td>
+  </tr>
+  <tr>
+    <td>Scheduled (cron) backup</td>
+    <td class="no">No (daemon)</td>
+    <td><code>CreateDefaultBackupSchedule</code> is only called in <code>serve.go</code>.
+        The long-running daemon fires backups on a timer.</td>
+  </tr>
+</table>
+
+<div class="callout pink">
+  <strong>Gotcha:</strong> Without <code>WireOptionalServices</code> in the hook subprocess's <code>PersistentPreRunE</code>,
+  <code>b.backup == nil</code> and push-triggered backups silently no-op with nothing logged.
+  This is explicitly documented in <code>cmd/hook/hook.go</code> and <code>cmd/services.go</code>.
+</div>
+
+<!-- ===== SUMMARY TABLE ===== -->
+<h2>📋 Complete picture</h2>
+
+<table>
+  <tr>
+    <th>Operation</th>
+    <th>Subprocess?</th>
+    <th>Which process</th>
+    <th>Why not in daemon?</th>
+  </tr>
+  <tr>
+    <td>Pre-receive CI validation</td>
+    <td class="yes">Yes</td>
+    <td><code>soft hook pre-receive</code></td>
+    <td>Git spawns pre-receive as a child process; must exit non-zero to reject push</td>
+  </tr>
+  <tr>
+    <td>Pre-receive webhook (branch/tag)</td>
+    <td class="yes">Yes</td>
+    <td><code>soft hook pre-receive</code></td>
+    <td>Same Git architecture constraint</td>
+  </tr>
+  <tr>
+    <td>Update hook (per-ref webhooks)</td>
+    <td class="yes">Yes</td>
+    <td><code>soft hook update</code></td>
+    <td>Same — Git passes ref/old/new as args to a child process</td>
+  </tr>
+  <tr>
+    <td>Post-receive CI workflow sync</td>
+    <td class="yes">Yes</td>
+    <td><code>soft hook post-receive</code></td>
+    <td>Push already accepted; runs in post-receive hook chain</td>
+  </tr>
+  <tr>
+    <td>Post-receive backup trigger</td>
+    <td class="yes">Yes</td>
+    <td><code>soft hook post-receive</code></td>
+    <td>Same — part of post-receive hook chain</td>
+  </tr>
+  <tr>
+    <td>Webhook → CI run creation</td>
+    <td class="no">No</td>
+    <td><code>soft serve</code> daemon</td>
+    <td>In-process event handler registered via <code>SetFiredEventHandler</code></td>
+  </tr>
+  <tr>
+    <td>Scheduled backups</td>
+    <td class="no">No</td>
+    <td><code>soft serve</code> daemon</td>
+    <td>Needs long-lived cron timer</td>
+  </tr>
+</table>
+
+<!-- ===== FOOTNOTE ===== -->
+<h2>📎 The generated hook scripts</h2>
+
+<p style="color:var(--text-dim);font-size:0.9rem;">
+  <code>pkg/hooks/gen.go</code> writes two files per hook into each bare repo's <code>hooks/</code> directory:
+</p>
+
+<div class="toggle-group">
+  <div class="toggle-header" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">
+    <span class="arrow-icon">▶</span>
+    <span><code>repo.git/hooks/pre-receive</code> — dispatcher script</span>
+  </div>
+  <div class="toggle-body">
+    <pre>#!/usr/bin/env bash
+# AUTO GENERATED BY SOFT SERVE, DO NOT MODIFY
+data=$(cat)
+exitcodes=""
+hookname=$(basename $0)
+GIT_DIR=${GIT_DIR:-$(dirname $0)/..}
+for hook in ${GIT_DIR}/hooks/${hookname}.d/*; do
+  test -x "${hook}" && test -f "${hook}" || continue
+  echo "${data}" | "${hook}" "$@"
+  exitcodes="${exitcodes} $?"
+done
+for i in ${exitcodes}; do
+  [ ${i} -eq 0 ] || exit ${i}
+done</pre>
+    <p>Reads stdin, iterates <code>pre-receive.d/*</code>, collects exit codes, exits on first failure.
+    This allows third-party hooks to coexist with Soft Serve's own hook.</p>
+  </div>
+</div>
+
+<div class="toggle-group">
+  <div class="toggle-header" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">
+    <span class="arrow-icon">▶</span>
+    <span><code>repo.git/hooks/pre-receive.d/soft-serve</code> — the actual hook</span>
+  </div>
+  <div class="toggle-body">
+    <pre>#!/usr/bin/env bash
+# AUTO GENERATED BY SOFT SERVE, DO NOT MODIFY
+if [ -z "$SOFT_SERVE_REPO_NAME" ]; then
+    echo "Warning: SOFT_SERVE_REPO_NAME not defined. Skipping hooks."
+    exit 0
+fi
+"${SOFT_SERVE_BIN_PATH}" hook pre-receive</pre>
+    <p>Invokes the <code>soft</code> binary's <code>hook pre-receive</code> subcommand.
+    <code>SOFT_SERVE_BIN_PATH</code> and <code>SOFT_SERVE_REPO_NAME</code> are set by
+    the SSH/HTTP transport layer <em>before</em> invoking <code>git-receive-pack</code>.</p>
+  </div>
+</div>
+
+<p class="note" style="margin-top:1.2rem">
+  Built from <code>soft-serve</code> at <code>main</code> — <code>pkg/hooks/gen.go</code>, <code>cmd/soft/hook/hook.go</code>, <code>cmd/services.go</code>, <code>cmd/soft/serve/serve.go</code>.
+</p>
+
+<script>
+  // Ensure toggle groups show content by default if they have the 'open' class
+  document.querySelectorAll('.toggle-header.open').forEach(h => {
+    h.nextElementSibling.classList.add('open');
+  });
+</script>
+
+</body>
+</html>

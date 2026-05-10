@@ -14,46 +14,50 @@ import (
 	"github.com/matryer/is"
 )
 
-// TestWireOptionalServices_BackupEnabled is the regression test for the
-// silent push-backup bug. The post-receive hook subprocess goes through
-// InitBackendContext, which constructs a fresh Backend with no backup or CI
-// service. Push-triggered backup (CreateRepoBackupOnPush) and CI workflow
-// sync (WorkflowsSyncedOnPush) therefore never fired, with no log output
-// because the hook guards (b.backup == nil, b.ci == nil) silently no-op.
-//
-// The fix wires the optional services in a helper that both the long-running
-// serve process and the hook subprocess call. This test pins the contract:
-// after WireOptionalServices, a Backend constructed in a hook-subprocess-
-// equivalent path carries a non-nil backup service when backup is enabled
-// in config.
-func TestWireOptionalServices_BackupEnabled(t *testing.T) {
+// TestWireOptionalServices_WiresCIOnly pins the post-refactor contract:
+// WireOptionalServices is the helper both the serve process and the hook
+// subprocess call to attach CI to a freshly constructed Backend. It must
+// NOT touch the backup service — backup is schedule-only and lives only
+// in serve, attached via WireBackupService.
+func TestWireOptionalServices_WiresCIOnly(t *testing.T) {
+	is := is.New(t)
+	ctx, dbx, cfg, st := newWiringTestContext(t, true)
+
+	be := backend.New(ctx, cfg, dbx, st)
+	is.True(be.BackupService() == nil) // sanity: not wired before the helper
+	is.True(be.CIService() == nil)     // sanity: not wired before the helper
+
+	is.NoErr(WireOptionalServices(ctx, cfg, be, dbx, st))
+
+	is.True(be.CIService() != nil)     // CI is wired unconditionally
+	is.True(be.BackupService() == nil) // backup is NOT wired by this helper
+}
+
+// TestWireBackupService_Enabled pins the serve-only backup wiring path.
+func TestWireBackupService_Enabled(t *testing.T) {
 	is := is.New(t)
 	ctx, dbx, cfg, st := newWiringTestContext(t, true)
 
 	be := backend.New(ctx, cfg, dbx, st)
 	is.True(be.BackupService() == nil) // sanity: not wired before the helper
 
-	is.NoErr(WireOptionalServices(ctx, cfg, be, dbx, st))
+	WireBackupService(ctx, cfg, be, dbx, st)
 
 	is.True(be.BackupService() != nil)         // backup service must be wired
 	is.True(be.BackupService().IsConfigured()) // and configured
-	is.True(be.CIService() != nil)             // CI is wired unconditionally
 }
 
-// TestWireOptionalServices_BackupDisabled verifies the helper leaves the
-// backup service nil when backup is not enabled, so the PostReceive guard
-// short-circuits cleanly. CI is still wired (it is unconditional in serve.go
-// today and behaves the same here).
-func TestWireOptionalServices_BackupDisabled(t *testing.T) {
+// TestWireBackupService_Disabled verifies the backup wiring helper leaves
+// the backup service nil when backup is not enabled.
+func TestWireBackupService_Disabled(t *testing.T) {
 	is := is.New(t)
 	ctx, dbx, cfg, st := newWiringTestContext(t, false)
 
 	be := backend.New(ctx, cfg, dbx, st)
 
-	is.NoErr(WireOptionalServices(ctx, cfg, be, dbx, st))
+	WireBackupService(ctx, cfg, be, dbx, st)
 
 	is.True(be.BackupService() == nil) // backup stays nil when disabled
-	is.True(be.CIService() != nil)     // CI is wired regardless
 }
 
 // newWiringTestContext builds a sqlite-backed config + db + store suitable

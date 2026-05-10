@@ -174,7 +174,6 @@ func TestConfig_Defaults(t *testing.T) {
 	is.Equal(cfg.MaxServerSnapshots, 30)                   // config-default.max_server_snapshots
 	is.Equal(cfg.MaxUploadRetries, 3)                      // config-default.max_upload_retries
 	is.Equal(cfg.UploadTimeout, 1*time.Hour)              // config-default.upload_timeout
-	is.Equal(cfg.BackupReposOnSchedule, false)             // config-default.backup_repos_on_schedule
 }
 
 func TestConfig_MandatoryParameters(t *testing.T) {
@@ -201,7 +200,6 @@ func TestConfig_Overrides(t *testing.T) {
 	is.Equal(cfg.MaxServerSnapshots, 30)
 	is.Equal(cfg.MaxUploadRetries, 3)
 	is.Equal(cfg.UploadTimeout, 1*time.Hour)
-	is.Equal(cfg.BackupReposOnSchedule, false)
 }
 
 // ============================================================================
@@ -398,33 +396,10 @@ func TestRestoreJobTerminal_NoOutboundFromFailed(t *testing.T) {
 // Spec obligations: rule-success.*
 // ============================================================================
 
-// --- CreateRepoBackupOnPush ---
-
-func TestRule_CreateRepoBackupOnPush_Success(t *testing.T) {
-	is := is.New(t)
-	now := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
-	b := RepoBackup{
-		ID:         1,
-		RepoName:   "my-repo",
-		CreatedAt:  now,
-		RetryCount: 0,
-		Status:     RepoBackupUploading,
-	}
-	// Rule ensures: RepoBackup created with status=uploading, retry_count=0
-	is.Equal(b.Status, RepoBackupUploading) // status should be uploading on creation
-	is.Equal(b.RetryCount, 0)               // retry_count should be 0 on creation
-	is.Equal(b.RepoName, "my-repo")         // repo field set from trigger
-	is.Equal(b.CreatedAt, now)               // created_at set from now
-}
-
 // --- CreateScheduledRepoBackups ---
 
 func TestRule_CreateScheduledRepoBackups_Success(t *testing.T) {
 	is := is.New(t)
-	cfg := validConfig()
-	cfg.BackupReposOnSchedule = true // requires config.backup_repos_on_schedule = true
-	is.Equal(cfg.BackupReposOnSchedule, true) // precondition satisfied
-
 	now := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
 	b := RepoBackup{
 		ID:         2,
@@ -433,15 +408,10 @@ func TestRule_CreateScheduledRepoBackups_Success(t *testing.T) {
 		RetryCount: 0,
 		Status:     RepoBackupUploading,
 	}
+	// Rule ensures: RepoBackup created with status=uploading, retry_count=0
+	// for every repo when the schedule fires.
 	is.Equal(b.Status, RepoBackupUploading)
 	is.Equal(b.RetryCount, 0)
-}
-
-func TestRule_CreateScheduledRepoBackups_RejectedWhenOff(t *testing.T) {
-	is := is.New(t)
-	cfg := DefaultBackupConfig()
-	is.Equal(cfg.BackupReposOnSchedule, false) // config.backup_repos_on_schedule = false (default)
-	// When requires clause fails, the rule is rejected: no RepoBackups created.
 }
 
 // --- CreateServerSnapshot ---
@@ -1421,24 +1391,6 @@ func TestSurface_S3DownloadAdapter_ProvidesDownloadOperations(t *testing.T) {
 	is.Equal(j.Status, RestoreJobRestoringRepos)
 }
 
-// --- GitPushNotification ---
-
-func TestSurface_GitPushNotification_ProvidesPushToDefaultBranch(t *testing.T) {
-	is := is.New(t)
-	// provides: PushToDefaultBranch(repo)
-	// When a push to a repo's default branch fires, a RepoBackup is created.
-	repo := RepoInfo{Name: "my-repo", DefaultBranch: "main"}
-	now := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
-	b := RepoBackup{
-		RepoName:   repo.Name,
-		CreatedAt:   now,
-		RetryCount:  0,
-		Status:      RepoBackupUploading,
-	}
-	is.Equal(b.RepoName, "my-repo")  // repo name from PushToDefaultBranch
-	is.Equal(b.Status, RepoBackupUploading) // created with uploading status
-}
-
 // ============================================================================
 // 11. Scenario tests
 // Full lifecycle: happy paths and error paths.
@@ -1449,7 +1401,7 @@ func TestScenario_RepoBackupLifecycle_HappyPath(t *testing.T) {
 	clk := newFakeClock()
 	cfg := validConfig()
 
-	// 1. Push triggers CreateRepoBackupOnPush
+	// 1. Schedule fires CreateScheduledRepoBackups
 	b := RepoBackup{
 		ID:         1,
 		RepoName:   "my-repo",
@@ -1614,22 +1566,12 @@ func TestScenario_RestoreFailFromRestoringRepos(t *testing.T) {
 	is.Equal(job.Status.IsTerminal(), true)
 }
 
-func TestScenario_ScheduledRepoBackupSkippedWhenOff(t *testing.T) {
+func TestScenario_ScheduledRepoBackupCreatesForEveryRepo(t *testing.T) {
 	is := is.New(t)
-	cfg := DefaultBackupConfig()
-	// When backup_repos_on_schedule is false (default), CreateScheduledRepoBackups is rejected.
-	is.Equal(cfg.BackupReposOnSchedule, false)
-	// No RepoBackups are created by the scheduled trigger.
-}
-
-func TestScenario_ScheduledRepoBackupCreatesWhenOn(t *testing.T) {
-	is := is.New(t)
-	cfg := validConfig()
-	cfg.BackupReposOnSchedule = true
 	clk := newFakeClock()
-	is.Equal(cfg.BackupReposOnSchedule, true) // scheduled backups enabled
 
-	// CreateScheduledRepoBackups fires for each repo.
+	// CreateScheduledRepoBackups fires unconditionally for every repo on
+	// each schedule tick.
 	repos := []RepoInfo{
 		{Name: "repo-a", DefaultBranch: "main"},
 		{Name: "repo-b", DefaultBranch: "main"},
@@ -1810,11 +1752,11 @@ func TestCrossRule_StoredBackupCannotTransition(t *testing.T) {
 // Surface capture → rule → downstream precondition
 // ============================================================================
 
-func TestDataFlow_PushTriggerToStoredBackup(t *testing.T) {
+func TestDataFlow_ScheduleTriggerToStoredRepoBackup(t *testing.T) {
 	is := is.New(t)
 	clk := newFakeClock()
-	// GitPushNotification provides PushToDefaultBranch(repo)
-	// → CreateRepoBackupOnPush creates RepoBackup(status=uploading)
+	// FireBackupSchedule → BackupScheduleFired()
+	// → CreateScheduledRepoBackups creates RepoBackup(status=uploading)
 	// → S3UploadAdapter provides RepoBackupUploadSucceeded(backup)
 	// → RepoBackupUploadSucceeds transitions to stored
 	b := RepoBackup{
