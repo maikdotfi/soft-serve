@@ -1,10 +1,13 @@
 package fake_test
 
 import (
+	"bytes"
 	"context"
+	"strings"
 	"testing"
 	"time"
 
+	"charm.land/log/v2"
 	"github.com/charmbracelet/soft-serve/pkg/backup"
 	"github.com/charmbracelet/soft-serve/pkg/backup/adapters/fake"
 	"github.com/matryer/is"
@@ -35,9 +38,9 @@ type fakeClock struct {
 	now time.Time
 }
 
-func (c *fakeClock) Now() time.Time           { return c.now }
+func (c *fakeClock) Now() time.Time          { return c.now }
 func (c *fakeClock) Advance(d time.Duration) { c.now = c.now.Add(d) }
-func newFakeClock() *fakeClock                { return &fakeClock{now: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)} }
+func newFakeClock() *fakeClock               { return &fakeClock{now: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)} }
 
 func TestService_Tick_CreatesServerSnapshot(t *testing.T) {
 	is := is.New(t)
@@ -48,9 +51,11 @@ func TestService_Tick_CreatesServerSnapshot(t *testing.T) {
 	err := svc.Tick(context.Background())
 	is.NoErr(err)
 
-	snapshots, err := store.ListServerSnapshotsByStatus(context.Background(), backup.ServerSnapshotUploading)
+	uploading, err := store.ListServerSnapshotsByStatus(context.Background(), backup.ServerSnapshotUploading)
 	is.NoErr(err)
-	is.Equal(len(snapshots) >= 1, true)
+	stored, err := store.ListServerSnapshotsByStatus(context.Background(), backup.ServerSnapshotStored)
+	is.NoErr(err)
+	is.Equal(len(uploading)+len(stored) >= 1, true)
 }
 
 // Tick must back up every repo on every schedule fire. Spec rule
@@ -70,6 +75,81 @@ func TestService_Tick_AlwaysCreatesRepoBackups(t *testing.T) {
 	backups2, _ := store.ListRepoBackupsByRepo(context.Background(), "repo2")
 	is.Equal(len(backups1), 1)
 	is.Equal(len(backups2), 1)
+}
+
+func TestService_LogScheduleReady_LogsNextScheduledRun(t *testing.T) {
+	is := is.New(t)
+	cfg := backup.DefaultBackupConfig()
+	cfg.S3Endpoint = "https://s3.example.com"
+	cfg.S3Bucket = "test-bucket"
+	cfg.S3Region = "us-east-1"
+
+	store := fake.NewFakeBackupStore()
+	clock := newFakeClock()
+	var buf bytes.Buffer
+	logger := log.New(&buf)
+	logger.SetFormatter(log.LogfmtFormatter)
+	svc := backup.NewBackupService(
+		cfg,
+		store,
+		fake.NewFakeS3Provider(),
+		fake.NewFakeBundleProvider(),
+		fake.NewFakeSnapshotDataProvider(),
+		fake.NewFakeRepoProvider(nil),
+		clock,
+		logger,
+	)
+
+	err := svc.LogScheduleReady(context.Background())
+	is.NoErr(err)
+
+	out := buf.String()
+	is.True(strings.Contains(out, "level=info"))
+	is.True(strings.Contains(out, "msg=\"backup schedule ready\""))
+	is.True(strings.Contains(out, "next_run_at="))
+	is.True(strings.Contains(out, "run_in=6h0m0s"))
+	is.True(strings.Contains(out, "schedule_interval=6h0m0s"))
+}
+
+func TestService_Tick_LogsScheduledRunSummary(t *testing.T) {
+	is := is.New(t)
+	cfg := backup.DefaultBackupConfig()
+	cfg.S3Endpoint = "https://s3.example.com"
+	cfg.S3Bucket = "test-bucket"
+	cfg.S3Region = "us-east-1"
+	cfg.UploadTimeout = 0
+
+	store := fake.NewFakeBackupStore()
+	clock := newFakeClock()
+	var buf bytes.Buffer
+	logger := log.New(&buf)
+	logger.SetFormatter(log.LogfmtFormatter)
+	svc := backup.NewBackupService(
+		cfg,
+		store,
+		fake.NewFakeS3Provider(),
+		fake.NewFakeBundleProvider(),
+		fake.NewFakeSnapshotDataProvider(),
+		fake.NewFakeRepoProvider([]backup.RepoInfo{
+			{Name: "repo1", DefaultBranch: "main"},
+			{Name: "repo2", DefaultBranch: "main"},
+		}),
+		clock,
+		logger,
+	)
+	is.NoErr(store.SetBackupScheduleNextRunAt(context.Background(), clock.Now()))
+
+	err := svc.Tick(context.Background())
+	is.NoErr(err)
+
+	out := buf.String()
+	is.True(strings.Contains(out, "level=info"))
+	is.True(strings.Contains(out, "msg=\"scheduled backup run summary\""))
+	is.True(strings.Contains(out, "repo_count=2"))
+	is.True(strings.Contains(out, "repo_backups_created=2"))
+	is.True(strings.Contains(out, "repo_backup_create_failures=0"))
+	is.True(strings.Contains(out, "server_snapshot_created=true"))
+	is.True(strings.Contains(out, "next_run_at="))
 }
 
 func TestService_StartRestore_RequiresAdmin(t *testing.T) {

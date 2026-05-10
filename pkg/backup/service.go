@@ -53,24 +53,46 @@ func NewBackupService(
 	}
 }
 
-
-
 // --- Schedule operations ---
+
+func (s *BackupService) ensureDefaultBackupSchedule(ctx context.Context) (*BackupSchedule, bool, error) {
+	existing, err := s.store.GetBackupSchedule(ctx)
+	if err != nil && !errors.Is(err, ErrBackupNotFound) {
+		return nil, false, fmt.Errorf("checking backup schedule: %w", err)
+	}
+	if existing != nil {
+		return existing, false, nil
+	}
+
+	nextRunAt := s.clock.Now().Add(s.cfg.ScheduleInterval)
+	if err := s.store.SetBackupScheduleNextRunAt(ctx, nextRunAt); err != nil {
+		return nil, false, fmt.Errorf("creating default backup schedule: %w", err)
+	}
+	return &BackupSchedule{NextRunAt: nextRunAt}, true, nil
+}
 
 // CreateDefaultBackupSchedule creates the default BackupSchedule if one
 // doesn't already exist. Per spec: default BackupSchedule main = { next_run_at: now + config.schedule_interval }
 func (s *BackupService) CreateDefaultBackupSchedule(ctx context.Context) error {
-	existing, err := s.store.GetBackupSchedule(ctx)
-	if err != nil && !errors.Is(err, ErrBackupNotFound) {
-		return fmt.Errorf("checking backup schedule: %w", err)
+	_, _, err := s.ensureDefaultBackupSchedule(ctx)
+	return err
+}
+
+// LogScheduleReady ensures the schedule exists and logs the next scheduled run.
+func (s *BackupService) LogScheduleReady(ctx context.Context) error {
+	schedule, created, err := s.ensureDefaultBackupSchedule(ctx)
+	if err != nil {
+		return err
 	}
-	if existing != nil {
-		return nil // already exists
-	}
-	nextRunAt := s.clock.Now().Add(s.cfg.ScheduleInterval)
-	if err := s.store.SetBackupScheduleNextRunAt(ctx, nextRunAt); err != nil {
-		return fmt.Errorf("creating default backup schedule: %w", err)
-	}
+
+	now := s.clock.Now()
+	s.logger.Info(
+		"backup schedule ready",
+		"next_run_at", schedule.NextRunAt,
+		"run_in", schedule.NextRunAt.Sub(now),
+		"schedule_interval", s.cfg.ScheduleInterval,
+		"created", created,
+	)
 	return nil
 }
 
@@ -80,19 +102,9 @@ func (s *BackupService) CreateDefaultBackupSchedule(ctx context.Context) error {
 // operations. Per spec rules FireBackupSchedule, CreateServerSnapshot, and
 // CreateScheduledRepoBackups.
 func (s *BackupService) Tick(ctx context.Context) error {
-	schedule, err := s.store.GetBackupSchedule(ctx)
+	schedule, _, err := s.ensureDefaultBackupSchedule(ctx)
 	if err != nil {
-		return fmt.Errorf("getting backup schedule: %w", err)
-	}
-	if schedule == nil {
-		// No schedule yet, create default
-		if err := s.CreateDefaultBackupSchedule(ctx); err != nil {
-			return err
-		}
-		schedule, err = s.store.GetBackupSchedule(ctx)
-		if err != nil {
-			return fmt.Errorf("getting backup schedule: %w", err)
-		}
+		return err
 	}
 
 	now := s.clock.Now()
@@ -108,29 +120,57 @@ func (s *BackupService) Tick(ctx context.Context) error {
 		return fmt.Errorf("advancing backup schedule: %w", err)
 	}
 
+	var (
+		serverSnapshotCreated bool
+		serverSnapshotID      int64
+		repoCount             int
+		repoBackupsCreated    int
+		repoBackupFailures    int
+		repoListFailed        bool
+	)
+
 	// CreateServerSnapshot rule
 	snapshot, err := s.store.CreateServerSnapshot(ctx, now)
 	if err != nil {
 		s.logger.Error("failed to create server snapshot", "err", err)
 	} else {
+		serverSnapshotCreated = true
+		serverSnapshotID = snapshot.ID
 		go s.uploadServerSnapshot(context.Background(), snapshot)
 	}
 
 	// CreateScheduledRepoBackups rule: every schedule fire backs up every repo.
 	repos, err := s.repos.ListRepos(ctx)
 	if err != nil {
+		repoListFailed = true
 		s.logger.Error("failed to list repos for scheduled backup", "err", err)
 	} else {
+		repoCount = len(repos)
 		for _, repo := range repos {
 			backup, err := s.store.CreateRepoBackup(ctx, repo.Name, now)
 			if err != nil {
+				repoBackupFailures++
 				s.logger.Error("failed to create scheduled repo backup", "repo", repo.Name, "err", err)
 				continue
 			}
+			repoBackupsCreated++
 			b := backup
 			go s.uploadRepoBackup(context.Background(), b)
 		}
 	}
+
+	s.logger.Info(
+		"scheduled backup run summary",
+		"scheduled_run_at", schedule.NextRunAt,
+		"started_at", now,
+		"next_run_at", newNextRunAt,
+		"server_snapshot_created", serverSnapshotCreated,
+		"server_snapshot_id", serverSnapshotID,
+		"repo_count", repoCount,
+		"repo_backups_created", repoBackupsCreated,
+		"repo_backup_create_failures", repoBackupFailures,
+		"repo_list_failed", repoListFailed,
+	)
 
 	return nil
 }

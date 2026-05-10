@@ -90,8 +90,8 @@ var (
 			// on the long-running process.
 			if svc := be.BackupService(); svc != nil {
 				backupLogger := log.FromContext(ctx).WithPrefix("backup")
-				if err := svc.CreateDefaultBackupSchedule(ctx); err != nil {
-					backupLogger.Error("failed to create default backup schedule", "err", err)
+				if err := svc.LogScheduleReady(ctx); err != nil {
+					backupLogger.Error("failed to prepare backup schedule", "err", err)
 				}
 			}
 			webhook.SetFiredEventHandler(be.OnWebhookFired)
