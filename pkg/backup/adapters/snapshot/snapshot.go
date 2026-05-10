@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/charmbracelet/soft-serve/pkg/db"
 	"github.com/charmbracelet/soft-serve/pkg/store"
@@ -125,10 +126,11 @@ func (s *ServerSnapshotProvider) dumpDatabase(_ context.Context) ([]byte, error)
 	driverName := s.db.DriverName()
 	switch driverName {
 	case "sqlite3", "sqlite":
-		if s.dbPath == "" {
+		dbPath := sqliteDatabasePath(s.dbPath)
+		if dbPath == "" {
 			return nil, fmt.Errorf("cannot determine database path")
 		}
-		data, err := os.ReadFile(s.dbPath)
+		data, err := os.ReadFile(dbPath)
 		if err != nil {
 			return nil, fmt.Errorf("reading SQLite database file: %w", err)
 		}
@@ -138,19 +140,25 @@ func (s *ServerSnapshotProvider) dumpDatabase(_ context.Context) ([]byte, error)
 	}
 }
 
+func sqliteDatabasePath(dataSource string) string {
+	dbPath, _, _ := strings.Cut(dataSource, "?")
+	return dbPath
+}
+
 // restoreDatabase restores the database from a dump.
 func (s *ServerSnapshotProvider) restoreDatabase(_ context.Context, dump []byte) error {
 	driverName := s.db.DriverName()
 	switch driverName {
 	case "sqlite3", "sqlite":
-		if s.dbPath == "" {
+		dbPath := sqliteDatabasePath(s.dbPath)
+		if dbPath == "" {
 			return fmt.Errorf("cannot determine database path")
 		}
-		tmpPath := s.dbPath + ".restoring"
+		tmpPath := dbPath + ".restoring"
 		if err := os.WriteFile(tmpPath, dump, 0o644); err != nil {
 			return fmt.Errorf("writing restored database: %w", err)
 		}
-		if err := os.Rename(tmpPath, s.dbPath); err != nil {
+		if err := os.Rename(tmpPath, dbPath); err != nil {
 			return fmt.Errorf("swapping restored database: %w", err)
 		}
 		return nil
