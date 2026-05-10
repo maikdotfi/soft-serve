@@ -22,33 +22,30 @@ import (
 	"github.com/charmbracelet/soft-serve/pkg/store"
 )
 
-// WireOptionalServices attaches the backup and CI services to the Backend
-// when their configuration permits. It is intended to be called by every
-// composition root that constructs a Backend and dispatches push hooks —
-// notably both the long-running `soft serve` process and the short-lived
-// `soft hook *` subprocess that git invokes on receive.
+// WireOptionalServices attaches the CI service to the Backend. It is
+// called by every composition root that constructs a Backend and
+// dispatches git hooks — both the long-running `soft serve` process and
+// the short-lived `soft hook *` subprocess that git invokes on receive.
+// CI is wired here because pre-receive workflow validation runs
+// synchronously inside the hook subprocess.
 //
-// Without this wiring on the hook subprocess path, PostReceive's guards
-// (b.backup == nil, b.ci == nil) silently no-op and push-triggered
-// backups / workflow sync never run, with nothing logged.
-//
-// Side-effects intentionally NOT performed here, because they are
-// serve-process-only:
-//   - svc.CreateDefaultBackupSchedule: scheduled (cron) backups belong to
-//     the long-running process, not to a per-push subprocess.
-//   - webhook.SetFiredEventHandler: the in-process webhook fan-out only
-//     runs in the server.
+// Backup is intentionally NOT wired here. Backup is schedule-only and
+// runs entirely inside the long-running serve process; the hook
+// subprocess has no business spawning S3 uploads. Serve calls
+// WireBackupService directly.
 func WireOptionalServices(ctx context.Context, cfg *config.Config, be *backend.Backend, dbx *db.DB, st store.Store) error {
-	wireBackupService(ctx, cfg, be, dbx, st)
 	wireCIService(ctx, cfg, be, dbx)
 	return nil
 }
 
-// wireBackupService constructs and attaches the backup service if
+// WireBackupService constructs and attaches the backup service if
 // cfg.Backup.Enabled is true and the minimum S3 settings are present.
+// Only the long-running serve process (and the standalone restore
+// command) need this; the hook subprocess does not.
+//
 // Failures are logged and downgraded to "backup disabled" rather than
 // aborting startup; this matches the existing behavior in serve.go.
-func wireBackupService(ctx context.Context, cfg *config.Config, be *backend.Backend, dbx *db.DB, st store.Store) {
+func WireBackupService(ctx context.Context, cfg *config.Config, be *backend.Backend, dbx *db.DB, st store.Store) {
 	if !cfg.Backup.Enabled {
 		return
 	}
@@ -56,25 +53,24 @@ func wireBackupService(ctx context.Context, cfg *config.Config, be *backend.Back
 
 	cfgResult, err := config.ConvertBackupConfig(cfg.Backup)
 	if err != nil {
-		logger.Error("invalid backup configuration, push-triggered backups disabled", "err", err)
+		logger.Error("invalid backup configuration, scheduled backups disabled", "err", err)
 		return
 	}
 	if cfg.Backup.S3Endpoint == "" || cfg.Backup.S3Bucket == "" || cfg.Backup.S3Region == "" {
-		logger.Warn("backup enabled but S3 endpoint/bucket/region incomplete, push-triggered backups disabled")
+		logger.Warn("backup enabled but S3 endpoint/bucket/region incomplete, scheduled backups disabled")
 		return
 	}
 
 	backupCfg := backup.BackupConfig{
-		S3Endpoint:            cfgResult.S3Endpoint,
-		S3Bucket:              cfgResult.S3Bucket,
-		S3Region:              cfgResult.S3Region,
-		S3PathPrefix:          cfgResult.S3PathPrefix,
-		ScheduleInterval:      cfgResult.ScheduleInterval,
-		MaxRepoBackups:        cfgResult.MaxRepoBackups,
-		MaxServerSnapshots:    cfgResult.MaxServerSnapshots,
-		MaxUploadRetries:      cfgResult.MaxUploadRetries,
-		UploadTimeout:         cfgResult.UploadTimeout,
-		BackupReposOnSchedule: cfgResult.BackupReposOnSchedule,
+		S3Endpoint:         cfgResult.S3Endpoint,
+		S3Bucket:           cfgResult.S3Bucket,
+		S3Region:           cfgResult.S3Region,
+		S3PathPrefix:       cfgResult.S3PathPrefix,
+		ScheduleInterval:   cfgResult.ScheduleInterval,
+		MaxRepoBackups:     cfgResult.MaxRepoBackups,
+		MaxServerSnapshots: cfgResult.MaxServerSnapshots,
+		MaxUploadRetries:   cfgResult.MaxUploadRetries,
+		UploadTimeout:      cfgResult.UploadTimeout,
 	}
 
 	s3Adapter, err := ss3.NewAdapter(ss3.S3Config{
@@ -86,7 +82,7 @@ func wireBackupService(ctx context.Context, cfg *config.Config, be *backend.Back
 		SecretKey:  cfg.Backup.S3SecretKey,
 	})
 	if err != nil {
-		logger.Error("failed to create S3 adapter, push-triggered backups disabled", "err", err)
+		logger.Error("failed to create S3 adapter, scheduled backups disabled", "err", err)
 		return
 	}
 
@@ -105,7 +101,7 @@ func wireBackupService(ctx context.Context, cfg *config.Config, be *backend.Back
 		logger,
 	)
 	be.SetBackupService(svc)
-	logger.Info("backup service wired, push-triggered repo backups enabled")
+	logger.Info("backup service wired, scheduled backups enabled")
 }
 
 // wireCIService constructs and attaches the CI service. CI is wired

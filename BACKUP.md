@@ -7,21 +7,24 @@ of everything.
 
 ## How it works
 
-There are two kinds of backups:
+Backups are **schedule-driven**: every time the backup schedule fires,
+Soft Serve creates two artifacts:
 
-- **Repo backups** – A `git bundle` of each repository, uploaded to S3.
-  Repos can be backed up automatically on every push to the default branch, or
-  on a schedule (or both).
-- **Server snapshots** – A full archive of the server database, config, and
-  SSH keys. Server snapshots are created on a schedule (every time the
-  backup schedule fires).
+- **Repo backups** – a `git bundle` of every repository, uploaded to S3.
+- **Server snapshots** – a full archive of the server database, config,
+  and SSH keys.
 
-Backups are rotated automatically. When the configured limit is exceeded the
-oldest stored backups are pruned from both S3 _and_ the database.
+Both are produced on the same tick. The recovery point objective (RPO) is
+bounded by `schedule_interval` — a push that lands between two ticks is
+not in S3 until the next one fires. Tune the interval to match your
+tolerance for data loss.
 
-Restoring is done with the `soft restore` subcommand. It downloads the latest
-server snapshot and the latest stored bundle for every repository, and
-restores them in order.
+Backups are rotated automatically. When the configured limit is exceeded
+the oldest stored backups are pruned from both S3 _and_ the database.
+
+Restoring is done with the `soft restore` subcommand. It downloads the
+latest server snapshot and the latest stored bundle for every repository,
+and restores them in order.
 
 ## Enabling S3 backup
 
@@ -68,10 +71,6 @@ backup:
 
   # Maximum time an upload may take before it is marked failed (default: "1h").
   upload_timeout: "1h"
-
-  # Also back up all repositories on the schedule (default: false).
-  # When false, repos are only backed up when a push lands on their default branch.
-  backup_repos_on_schedule: false
 ```
 
 ### Via environment variables
@@ -90,7 +89,6 @@ Every field can also be set with the `SOFT_SERVE_BACKUP_` prefix:
 | `max_server_snapshots`| `SOFT_SERVE_BACKUP_MAX_SERVER_SNAPSHOTS`       | `30`          |
 | `max_upload_retries` | `SOFT_SERVE_BACKUP_MAX_UPLOAD_RETRIES`          | `3`           |
 | `upload_timeout`     | `SOFT_SERVE_BACKUP_UPLOAD_TIMEOUT`              | `1h`          |
-| `backup_repos_on_schedule` | `SOFT_SERVE_BACKUP_BACKUP_REPOS_ON_SCHEDULE` | `false`   |
 
 > **Note** The `access_key` and `secret_key` fields are **never** written to
 > `config.yaml`. They must be provided via environment variables (see below).
@@ -125,21 +123,20 @@ accessible.
 
 ## Backup triggers
 
-### On push to the default branch
-
-Every time someone pushes to a repository's default branch (typically `main`),
-Soft Serve automatically creates a repo backup. The bundle is created and
-uploaded to S3 asynchronously — it does not block the push.
-
 ### On schedule
 
-When the backup schedule fires (controlled by `schedule_interval`), Soft Serve
-creates a **server snapshot**. If `backup_repos_on_schedule` is `true`, it also
-creates a **repo backup** for every repository at that point.
+The backup schedule is the only automatic trigger. When it fires
+(controlled by `schedule_interval`), Soft Serve creates one
+**server snapshot** plus one **repo backup** per repository.
 
-Set `backup_repos_on_schedule: true` if you want full periodic coverage of all
-repos — for example, to back up repos that receive pushes from mirrors rather
-than direct user pushes.
+Choose `schedule_interval` to match your acceptable RPO: a push that
+lands between ticks is not in S3 until the next tick.
+
+### Manual
+
+Admins can trigger a server snapshot or a repo backup on demand outside
+the schedule via the `AdminBackupManagement` surface. This is useful for
+ad-hoc snapshots before maintenance or migrations.
 
 ## Retention and rotation
 
@@ -212,9 +209,6 @@ export SOFT_SERVE_BACKUP_REGION="us-east-1"
 # S3 credentials (never stored in config.yaml)
 export SOFT_SERVE_BACKUP_ACCESS_KEY="AKIAIOSFODNN7EXAMPLE"
 export SOFT_SERVE_BACKUP_SECRET_KEY="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
-
-# Optional: back up all repos on every schedule tick
-export SOFT_SERVE_BACKUP_BACKUP_REPOS_ON_SCHEDULE=true
 
 # Start the server
 soft serve

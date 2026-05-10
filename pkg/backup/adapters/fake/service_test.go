@@ -39,21 +39,6 @@ func (c *fakeClock) Now() time.Time           { return c.now }
 func (c *fakeClock) Advance(d time.Duration) { c.now = c.now.Add(d) }
 func newFakeClock() *fakeClock                { return &fakeClock{now: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)} }
 
-func TestService_HandlePushToDefaultBranch(t *testing.T) {
-	is := is.New(t)
-	svc, store, _, _, _ := newTestService(t)
-
-	err := svc.HandlePushToDefaultBranch(context.Background(), "repo1")
-	is.NoErr(err)
-
-	backups, err := store.ListRepoBackupsByRepo(context.Background(), "repo1")
-	is.NoErr(err)
-	is.Equal(len(backups), 1)
-	is.Equal(backups[0].RepoName, "repo1")
-	is.Equal(backups[0].Status, backup.RepoBackupUploading)
-	is.Equal(backups[0].RetryCount, 0)
-}
-
 func TestService_Tick_CreatesServerSnapshot(t *testing.T) {
 	is := is.New(t)
 	svc, store, _, _, clock := newTestService(t)
@@ -68,40 +53,13 @@ func TestService_Tick_CreatesServerSnapshot(t *testing.T) {
 	is.Equal(len(snapshots) >= 1, true)
 }
 
-func TestService_Tick_SkipsRepoBackupWhenDisabled(t *testing.T) {
+// Tick must back up every repo on every schedule fire. Spec rule
+// CreateScheduledRepoBackups is unconditional now that push-triggered
+// backup is gone — there is no opt-out flag, so a fired schedule must
+// touch every repo the RepoProvider knows about.
+func TestService_Tick_AlwaysCreatesRepoBackups(t *testing.T) {
 	is := is.New(t)
 	svc, store, _, _, clock := newTestService(t)
-
-	is.NoErr(store.SetBackupScheduleNextRunAt(context.Background(), clock.Now()))
-
-	err := svc.Tick(context.Background())
-	is.NoErr(err)
-
-	backups1, _ := store.ListRepoBackupsByRepo(context.Background(), "repo1")
-	backups2, _ := store.ListRepoBackupsByRepo(context.Background(), "repo2")
-	is.Equal(len(backups1), 0)
-	is.Equal(len(backups2), 0)
-}
-
-func TestService_Tick_CreatesRepoBackupsWhenEnabled(t *testing.T) {
-	is := is.New(t)
-	cfg := backup.DefaultBackupConfig()
-	cfg.S3Endpoint = "https://s3.example.com"
-	cfg.S3Bucket = "test-bucket"
-	cfg.S3Region = "us-east-1"
-	cfg.BackupReposOnSchedule = true
-
-	store := fake.NewFakeBackupStore()
-	s3 := fake.NewFakeS3Provider()
-	bundler := fake.NewFakeBundleProvider()
-	snapshotDataProvider := fake.NewFakeSnapshotDataProvider()
-	clock := newFakeClock()
-	repos := fake.NewFakeRepoProvider([]backup.RepoInfo{
-		{Name: "repo1", DefaultBranch: "main"},
-		{Name: "repo2", DefaultBranch: "main"},
-	})
-
-	svc := backup.NewBackupService(cfg, store, s3, bundler, snapshotDataProvider, repos, clock, nil)
 
 	is.NoErr(store.SetBackupScheduleNextRunAt(context.Background(), clock.Now()))
 

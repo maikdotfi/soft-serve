@@ -1,0 +1,46 @@
+# vi: set ft=conf
+#
+# End-to-end check that the scheduled backup loop produces a repo bundle
+# in S3 (Garage). After dropping push-triggered backup, the schedule is
+# the only path that uploads repo bundles. Skipped unless GARAGE_* env
+# is set; see `make garage-up`.
+
+[!env:GARAGE_S3_ENDPOINT] skip 'GARAGE_* env not set; run make garage-up'
+
+# Wire soft-serve at the Garage daemon. SSH_PORT is per-scenario random,
+# so it doubles as a unique-enough suffix for bucket and prefix.
+env SOFT_SERVE_BACKUP_ENABLED=true
+env SOFT_SERVE_BACKUP_ENDPOINT=$GARAGE_S3_ENDPOINT
+env SOFT_SERVE_BACKUP_REGION=$GARAGE_S3_REGION
+env SOFT_SERVE_BACKUP_ACCESS_KEY=$GARAGE_ACCESS_KEY
+env SOFT_SERVE_BACKUP_SECRET_KEY=$GARAGE_SECRET_KEY
+env SOFT_SERVE_BACKUP_BUCKET=soft-serve-test-$SSH_PORT
+env SOFT_SERVE_BACKUP_PATH_PREFIX=test-$SSH_PORT
+
+# Drive the schedule fast: 1s means the next cron tick (~1m cadence in
+# pkg/jobs/backup.go) will see the schedule due and fire it immediately.
+env SOFT_SERVE_BACKUP_SCHEDULE_INTERVAL=1s
+
+# Bucket must exist before the upload runs.
+s3preparebucket
+
+# start soft serve
+exec soft serve &
+ensureserverrunning SSH_PORT
+
+# create a repo and seed it with a commit so the bundle is non-trivial
+soft repo create backup-target
+git clone ssh://localhost:$SSH_PORT/backup-target backup-target
+mkfile ./backup-target/README.md '# Backup me'
+git -C backup-target add README.md
+git -C backup-target commit -m 'first'
+git -C backup-target push origin HEAD
+
+# Push must NOT block on backup work. The hook subprocess no longer
+# touches the backup service at all, so this push returns the moment
+# git-receive-pack is satisfied. The assertion below is the durability
+# contract — within ~90s (cron poll cadence + upload latency) the
+# scheduled bundle reaches S3.
+s3backupwait backup-target 90s
+
+stopserver

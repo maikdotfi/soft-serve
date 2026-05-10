@@ -178,9 +178,6 @@ type S3BackupConfig struct {
 	// UploadTimeout is the maximum time an upload can take before being marked
 	// failed. Parsed as a Go duration (e.g. "1h", "30m").
 	UploadTimeout string `env:"UPLOAD_TIMEOUT" yaml:"upload_timeout"`
-
-	// BackupReposOnSchedule controls whether repos are backed up on schedule.
-	BackupReposOnSchedule bool `env:"BACKUP_REPOS_ON_SCHEDULE" yaml:"backup_repos_on_schedule"`
 }
 
 // Config is the configuration for Soft Serve.
@@ -279,7 +276,6 @@ func (c *Config) Environ() []string {
 		fmt.Sprintf("SOFT_SERVE_BACKUP_MAX_SERVER_SNAPSHOTS=%d", c.Backup.MaxServerSnapshots),
 		fmt.Sprintf("SOFT_SERVE_BACKUP_MAX_UPLOAD_RETRIES=%d", c.Backup.MaxUploadRetries),
 		fmt.Sprintf("SOFT_SERVE_BACKUP_UPLOAD_TIMEOUT=%s", c.Backup.UploadTimeout),
-		fmt.Sprintf("SOFT_SERVE_BACKUP_BACKUP_REPOS_ON_SCHEDULE=%t", c.Backup.BackupReposOnSchedule),
 	}...)
 
 	return envs
@@ -308,7 +304,6 @@ func DefaultS3BackupConfig() S3BackupConfig {
 		MaxServerSnapshots: 30,
 		MaxUploadRetries:   3,
 		UploadTimeout:     "1h",
-		BackupReposOnSchedule: false,
 	}
 }
 
@@ -348,32 +343,30 @@ func ConvertBackupConfig(c S3BackupConfig) (BackupConfigResult, error) {
 		return BackupConfigResult{}, fmt.Errorf("parsing backup upload_timeout: %w", err)
 	}
 	return BackupConfigResult{
-		S3Endpoint:           c.S3Endpoint,
-		S3Bucket:             c.S3Bucket,
-		S3Region:             c.S3Region,
-		S3PathPrefix:          c.S3PathPrefix,
-		ScheduleInterval:     scheduleInterval,
-		MaxRepoBackups:       c.MaxRepoBackups,
-		MaxServerSnapshots:   c.MaxServerSnapshots,
-		MaxUploadRetries:     c.MaxUploadRetries,
-		UploadTimeout:        uploadTimeout,
-		BackupReposOnSchedule: c.BackupReposOnSchedule,
+		S3Endpoint:         c.S3Endpoint,
+		S3Bucket:           c.S3Bucket,
+		S3Region:           c.S3Region,
+		S3PathPrefix:       c.S3PathPrefix,
+		ScheduleInterval:   scheduleInterval,
+		MaxRepoBackups:     c.MaxRepoBackups,
+		MaxServerSnapshots: c.MaxServerSnapshots,
+		MaxUploadRetries:   c.MaxUploadRetries,
+		UploadTimeout:      uploadTimeout,
 	}, nil
 }
 
 // BackupConfigResult holds the parsed backup configuration values.
 // This avoids the need to import the domain backup package.
 type BackupConfigResult struct {
-	S3Endpoint           string
-	S3Bucket             string
-	S3Region             string
-	S3PathPrefix          string
-	ScheduleInterval     time.Duration
-	MaxRepoBackups       int
-	MaxServerSnapshots    int
-	MaxUploadRetries      int
-	UploadTimeout         time.Duration
-	BackupReposOnSchedule bool
+	S3Endpoint         string
+	S3Bucket           string
+	S3Region           string
+	S3PathPrefix       string
+	ScheduleInterval   time.Duration
+	MaxRepoBackups     int
+	MaxServerSnapshots int
+	MaxUploadRetries   int
+	UploadTimeout      time.Duration
 }
 
 // parseFile parses the given file as a configuration file.

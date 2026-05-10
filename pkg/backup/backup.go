@@ -17,28 +17,26 @@ import (
 // BackupConfig holds all configuration parameters for the backup subsystem.
 // Corresponds to the config block in backup.allium.
 type BackupConfig struct {
-	S3Endpoint           string
-	S3Bucket             string
-	S3Region             string
-	S3PathPrefix         string
-	ScheduleInterval     time.Duration
-	MaxRepoBackups       int
-	MaxServerSnapshots   int
-	MaxUploadRetries     int
-	UploadTimeout        time.Duration
-	BackupReposOnSchedule bool
+	S3Endpoint         string
+	S3Bucket           string
+	S3Region           string
+	S3PathPrefix       string
+	ScheduleInterval   time.Duration
+	MaxRepoBackups     int
+	MaxServerSnapshots int
+	MaxUploadRetries   int
+	UploadTimeout      time.Duration
 }
 
 // DefaultBackupConfig returns the config with defaults specified in the spec.
 func DefaultBackupConfig() BackupConfig {
 	return BackupConfig{
-		S3PathPrefix:         "soft-serve",
-		ScheduleInterval:     6 * time.Hour,
-		MaxRepoBackups:       5,
-		MaxServerSnapshots:    30,
-		MaxUploadRetries:     3,
-		UploadTimeout:        1 * time.Hour,
-		BackupReposOnSchedule: false,
+		S3PathPrefix:       "soft-serve",
+		ScheduleInterval:   6 * time.Hour,
+		MaxRepoBackups:     5,
+		MaxServerSnapshots: 30,
+		MaxUploadRetries:   3,
+		UploadTimeout:      1 * time.Hour,
 	}
 }
 

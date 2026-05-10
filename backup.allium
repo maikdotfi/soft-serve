@@ -2,9 +2,9 @@
 -- backup.allium
 
 -- Scope: S3 backup and restore for Soft Serve
--- Includes: Repo backup (push-triggered and scheduled), Server snapshot (scheduled), Database backup (part of server snapshot), Full restore, Backup rotation
--- Excludes: Secrets backup, S3-only storage mode, Partial or per-repo restore, Database WAL streaming, S3-specific features (lifecycle policies, versioning)
--- Dependencies: Repo entity, Admin user, Default branch concept from core
+-- Includes: Repo backup (scheduled), Server snapshot (scheduled), Database backup (part of server snapshot), Full restore, Backup rotation
+-- Excludes: Secrets backup, S3-only storage mode, Partial or per-repo restore, Database WAL streaming, S3-specific features (lifecycle policies, versioning), Push-triggered backup (RPO is bounded by schedule_interval)
+-- Dependencies: Repo entity, Admin user
 
 ------------------------------------------------------------
 -- Given
@@ -29,9 +29,6 @@ external entity User {
 
 external entity S3Client {
     endpoint: String
-}
-
-external entity GitServer {
 }
 
 ------------------------------------------------------------
@@ -97,7 +94,6 @@ config {
     upload_timeout: Duration = 1.hour
     -- The timeout covers the entire upload lifecycle including retries.
     -- A backup that hasn't completed within this time is marked failed.
-    backup_repos_on_schedule: Boolean = false
 }
 
 ------------------------------------------------------------
@@ -105,31 +101,20 @@ config {
 ------------------------------------------------------------
 
 ------------------------------------------------------------
--- Repo backup: push-triggered
-------------------------------------------------------------
-
-rule CreateRepoBackupOnPush {
-    when: PushToDefaultBranch(repo)
-    ensures: RepoBackup.created(repo: repo, created_at: now, retry_count: 0, status: uploading)
-
-    @guidance
-        -- Triggered when a push completes on a repo's default branch.
-        -- The entire repository content is backed up as a git bundle,
-        -- not just the pushed ref.
-        -- Concurrency: multiple RepoBackups for the same repo may be uploading
-        -- simultaneously; this is acceptable if simpler to implement.
-}
-
-------------------------------------------------------------
--- Repo backup: scheduled (for mirror repos or opt-in)
+-- Repo backup: scheduled
 ------------------------------------------------------------
 
 rule CreateScheduledRepoBackups {
     when: BackupScheduleFired()
-    requires: config.backup_repos_on_schedule = true
     ensures:
         for repo in Repos:
             RepoBackup.created(repo: repo, created_at: now, retry_count: 0, status: uploading)
+
+    @guidance
+        -- Every schedule fire bundles every known repo. The bundle is a
+        -- full `git bundle` of the repository at that instant, not a delta.
+        -- RPO is bounded by config.schedule_interval: a push that lands
+        -- between two schedule fires is not in S3 until the next one.
 }
 
 ------------------------------------------------------------
@@ -281,9 +266,8 @@ rule CreateManualRepoBackup {
 
     @guidance
         -- Admin manually triggers a repository backup outside the normal
-        -- push-triggered or schedule-triggered paths. Useful for ad-hoc
-        -- backup of a specific repo.
-        -- The upload follows the same retry/timeout rules as push-triggered backups.
+        -- schedule. Useful for ad-hoc backup of a specific repo.
+        -- The upload follows the same retry/timeout rules as scheduled backups.
 }
 
 ------------------------------------------------------------
@@ -427,13 +411,6 @@ surface S3DownloadAdapter {
         ServerSnapshotRestored(job)
         RepoRestoresComplete(job)
         RestoreFailed(job)
-}
-
-surface GitPushNotification {
-    facing git: GitServer
-
-    provides:
-        PushToDefaultBranch(repo)
 }
 
 ------------------------------------------------------------

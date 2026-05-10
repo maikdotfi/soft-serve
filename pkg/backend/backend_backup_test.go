@@ -9,7 +9,6 @@ import (
 	"github.com/charmbracelet/soft-serve/pkg/config"
 	"github.com/charmbracelet/soft-serve/pkg/db"
 	"github.com/charmbracelet/soft-serve/pkg/db/migrate"
-	"github.com/charmbracelet/soft-serve/pkg/hooks"
 	"github.com/charmbracelet/soft-serve/pkg/store/database"
 	"github.com/matryer/is"
 )
@@ -54,13 +53,11 @@ func minimalBackupService(store backup.BackupStore) *backup.BackupService {
 	return backup.NewBackupService(cfg, store, nil, nil, nil, nil, &backup.WallClock{}, nil)
 }
 
-// TestBackend_BackupServiceWiredAfterInit catches bug #1:
-// SetBackupService is never called during serve initialization, so
-// push-triggered backups (CreateRepoBackupOnPush) never fire.
-//
-// The test creates a Backend and verifies that after wiring the backup
-// service (as serve.go now does), BackupService() returns a non-nil
-// service and the PostReceive hook can use it safely.
+// TestBackend_BackupServiceWiredAfterInit pins the SetBackupService
+// contract: a freshly constructed Backend has no backup service, and the
+// long-running serve process is responsible for wiring one (via
+// cmd.WireBackupService) so the cron job and admin manual triggers can
+// drive uploads.
 func TestBackend_BackupServiceWiredAfterInit(t *testing.T) {
 	is := is.New(t)
 	ctx, dbx, cfg := testContext(t)
@@ -76,27 +73,6 @@ func TestBackend_BackupServiceWiredAfterInit(t *testing.T) {
 	be.SetBackupService(svc)
 
 	// After wiring: BackupService must be non-nil.
-	is.True(be.BackupService() != nil) // backup service must be wired after init
+	is.True(be.BackupService() != nil)         // backup service must be wired after init
 	is.True(be.BackupService().IsConfigured()) // wired service should be configured
-}
-
-// TestBackend_PostReceive_SkipsBackupWhenNilService verifies the guard
-// in PostReceive works correctly when the backup service is nil.
-// Without SetBackupService called, PostReceive must not crash — it
-// must safely skip the backup path.
-func TestBackend_PostReceive_SkipsBackupWhenNilService(t *testing.T) {
-	is := is.New(t)
-	ctx, dbx, cfg := testContext(t)
-
-	dbstore := database.New(ctx, dbx)
-	be := New(ctx, cfg, dbx, dbstore)
-
-	// Verify backup service is nil (the current buggy state).
-	is.True(be.BackupService() == nil) // without SetBackupService, service is nil
-
-	// PostReceive with no repos and nil backup service must not panic.
-	// The hook guard `d.backup != nil && d.backup.IsConfigured()` should
-	// short-circuit safely.
-	be.PostReceive(ctx, nil, nil, "nonexistent-repo", []hooks.HookArg{})
-	// If we get here without panic, the nil-guard works.
 }

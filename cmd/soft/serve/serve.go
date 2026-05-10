@@ -73,20 +73,21 @@ var (
 				return fmt.Errorf("migration error: %w", err)
 			}
 
-			// Attach backup + CI services to the Backend. The same call
-			// also runs in the post-receive hook subprocess (see
-			// cmd/soft/hook/hook.go) so push-triggered backups and
-			// workflow sync actually reach a wired Backend.
+			// Wire CI for both serve and the hook subprocess (the same
+			// call also runs in cmd/soft/hook/hook.go's PreRun). Backup
+			// is wired separately and only for serve, because backup is
+			// schedule-only and lives entirely in the long-running
+			// process.
 			be := backend.FromContext(ctx)
 			dbstore := store.FromContext(ctx)
 			if err := cmd.WireOptionalServices(ctx, cfg, be, db, dbstore); err != nil {
 				return fmt.Errorf("wire optional services: %w", err)
 			}
+			cmd.WireBackupService(ctx, cfg, be, db, dbstore)
 
 			// Serve-process-only side effects: the periodic backup
 			// schedule and the in-process webhook fan-out. Both rely
-			// on the long-running process and have no place in the
-			// short-lived hook subprocess.
+			// on the long-running process.
 			if svc := be.BackupService(); svc != nil {
 				backupLogger := log.FromContext(ctx).WithPrefix("backup")
 				if err := svc.CreateDefaultBackupSchedule(ctx); err != nil {
