@@ -17,6 +17,7 @@ import (
 	"io/fs"
 	"net/http"
 
+	"github.com/charmbracelet/soft-serve/pkg/webui/backupbrowser"
 	"github.com/charmbracelet/soft-serve/pkg/webui/repobrowser"
 )
 
@@ -38,6 +39,11 @@ func WithBasePath(p string) Option {
 // MaxBlobBytes sets the cap on rendered blob size. Default 256KiB.
 func MaxBlobBytes(n int64) Option {
 	return func(h *Handler) { h.maxBlobBytes = n }
+}
+
+// WithBackupReader enables the read-only backup status page.
+func WithBackupReader(r backupbrowser.Reader) Option {
+	return func(h *Handler) { h.backups = r }
 }
 
 // NewHandler returns an http.Handler serving the read-only browser.

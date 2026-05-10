@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/soft-serve/pkg/webui"
+	"github.com/charmbracelet/soft-serve/pkg/webui/backupbrowser"
+	backupfake "github.com/charmbracelet/soft-serve/pkg/webui/backupbrowser/fake"
 	"github.com/charmbracelet/soft-serve/pkg/webui/repobrowser"
 	"github.com/charmbracelet/soft-serve/pkg/webui/repobrowser/fake"
 )
@@ -49,6 +51,50 @@ func newTestHandler(t *testing.T) http.Handler {
 		},
 	})
 	h, err := webui.NewHandler(browser)
+	if err != nil {
+		t.Fatalf("NewHandler: %v", err)
+	}
+	return h
+}
+
+func newTestHandlerWithBackups(t *testing.T) http.Handler {
+	t.Helper()
+	updated := time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC)
+	browser := fake.New([]*fake.Repo{
+		{
+			Info: repobrowser.RepoInfo{
+				Name:          "alpha",
+				ProjectName:   "Alpha Project",
+				Description:   "first test repo",
+				DefaultBranch: "main",
+				UpdatedAt:     updated,
+			},
+			Files: map[string][]byte{"README.md": []byte("# Alpha\n")},
+		},
+	})
+	backups := backupfake.New(backupbrowser.Overview{
+		HasSchedule:  true,
+		NextRunAt:    time.Date(2026, 4, 3, 12, 0, 0, 0, time.UTC),
+		LastStoredAt: time.Date(2026, 4, 2, 9, 30, 0, 0, time.UTC),
+		LastFailedAt: time.Date(2026, 4, 2, 11, 15, 0, 0, time.UTC),
+		Records: []backupbrowser.Record{
+			{
+				Kind:       backupbrowser.KindRepoBackup,
+				ID:         11,
+				RepoName:   "alpha",
+				Status:     backupbrowser.StatusFailed,
+				CreatedAt:  time.Date(2026, 4, 2, 11, 15, 0, 0, time.UTC),
+				RetryCount: 3,
+			},
+			{
+				Kind:      backupbrowser.KindServerSnapshot,
+				ID:        10,
+				Status:    backupbrowser.StatusStored,
+				CreatedAt: time.Date(2026, 4, 2, 9, 30, 0, 0, time.UTC),
+			},
+		},
+	})
+	h, err := webui.NewHandler(browser, webui.WithBackupReader(backups))
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}
@@ -164,5 +210,31 @@ func TestStaticAssets_ServesCSS(t *testing.T) {
 	}
 	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "css") {
 		t.Errorf("Content-Type = %q, want css", ct)
+	}
+}
+
+func TestBackupsPage_ShowsStoredAndFailedBackupStatus(t *testing.T) {
+	h := newTestHandlerWithBackups(t)
+	rec, body := get(t, h, "/backups")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	for _, want := range []string{
+		"Backups",
+		"last stored",
+		"2026-04-02 09:30 UTC",
+		"last failed",
+		"2026-04-02 11:15 UTC",
+		"next run",
+		"2026-04-03 12:00 UTC",
+		"repo backup",
+		"alpha",
+		"failed",
+		"server snapshot",
+		"stored",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("backups page missing %q:\n%s", want, body)
+		}
 	}
 }

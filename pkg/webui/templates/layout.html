@@ -23,6 +23,9 @@
       <span class="brand__suffix">browser</span>
     </a>
     <nav class="topbar__statusline" aria-label="status">
+      {{if .HasBackups}}<a class="status__cell" href="{{.BasePath}}/backups"
+         hx-get="{{.BasePath}}/backups" hx-target="#content" hx-select="#content > *"
+         hx-swap="innerHTML" hx-push-url="true" hx-indicator="#net-indicator">backups</a>{{end}}
       <span class="status__cell">repos:<em>{{.RepoCount}}</em></span>
       <span class="status__cell status__cell--clock"><span class="dot"></span>{{.Now}}</span>
     </nav>
