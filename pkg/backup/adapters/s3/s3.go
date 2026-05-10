@@ -40,20 +40,9 @@ func NewAdapter(cfg S3Config) (*Adapter, error) {
 		return nil, fmt.Errorf("S3 endpoint, bucket, and region are required")
 	}
 
-	secure := cfg.Secure
-	if !cfg.Secure {
-		// Default to secure for non-localhost endpoints.
-		// Trim the port so comparisons work for "127.0.0.1:3900" etc.
-		host := cfg.Endpoint
-		if i := strings.LastIndex(cfg.Endpoint, ":"); i >= 0 {
-			host = cfg.Endpoint[:i]
-		}
-		if host != "localhost" && host != "127.0.0.1" {
-			secure = true
-		}
-	}
+	endpoint, secure := normalizeEndpoint(cfg.Endpoint, cfg.Secure)
 
-	client, err := minio.New(cfg.Endpoint, &minio.Options{
+	client, err := minio.New(endpoint, &minio.Options{
 		Creds:     credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
 		Region:    cfg.Region,
 		Secure:    secure,
@@ -67,6 +56,40 @@ func NewAdapter(cfg S3Config) (*Adapter, error) {
 		client: client,
 		config: cfg,
 	}, nil
+}
+
+// normalizeEndpoint converts a user-supplied endpoint into the bare
+// host[:port] form the MinIO SDK requires. An "http://" or "https://" prefix
+// implies the Secure setting; otherwise non-localhost endpoints default to
+// secure to match prior behavior.
+func normalizeEndpoint(raw string, secureFlag bool) (string, bool) {
+	endpoint := raw
+	secure := secureFlag
+	schemeFound := false
+	switch {
+	case strings.HasPrefix(endpoint, "https://"):
+		endpoint = strings.TrimPrefix(endpoint, "https://")
+		secure = true
+		schemeFound = true
+	case strings.HasPrefix(endpoint, "http://"):
+		endpoint = strings.TrimPrefix(endpoint, "http://")
+		secure = false
+		schemeFound = true
+	}
+	if i := strings.Index(endpoint, "/"); i >= 0 {
+		endpoint = endpoint[:i]
+	}
+
+	if !schemeFound && !secureFlag {
+		host := endpoint
+		if i := strings.LastIndex(endpoint, ":"); i >= 0 {
+			host = endpoint[:i]
+		}
+		if host != "localhost" && host != "127.0.0.1" {
+			secure = true
+		}
+	}
+	return endpoint, secure
 }
 
 // objectKey constructs the S3 object key for a repo backup.
