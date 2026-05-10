@@ -111,6 +111,26 @@ func TestService_LogScheduleReady_LogsNextScheduledRun(t *testing.T) {
 	is.True(strings.Contains(out, "schedule_interval=6h0m0s"))
 }
 
+func TestService_CreateDefaultBackupSchedule_ClampsExistingScheduleLaterThanConfiguredInterval(t *testing.T) {
+	is := is.New(t)
+	ctx := context.Background()
+	cfg := backup.DefaultBackupConfig()
+	cfg.ScheduleInterval = 2 * time.Minute
+
+	store := fake.NewFakeBackupStore()
+	clock := newFakeClock()
+	is.NoErr(store.SetBackupScheduleNextRunAt(ctx, clock.Now().Add(4*time.Hour)))
+
+	svc := backup.NewBackupService(cfg, store, nil, nil, nil, nil, clock, nil)
+
+	err := svc.CreateDefaultBackupSchedule(ctx)
+	is.NoErr(err)
+
+	schedule, err := store.GetBackupSchedule(ctx)
+	is.NoErr(err)
+	is.Equal(schedule.NextRunAt, clock.Now().Add(cfg.ScheduleInterval))
+}
+
 func TestService_Tick_LogsScheduledRunSummary(t *testing.T) {
 	is := is.New(t)
 	cfg := backup.DefaultBackupConfig()

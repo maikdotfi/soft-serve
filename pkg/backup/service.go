@@ -60,11 +60,18 @@ func (s *BackupService) ensureDefaultBackupSchedule(ctx context.Context) (*Backu
 	if err != nil && !errors.Is(err, ErrBackupNotFound) {
 		return nil, false, fmt.Errorf("checking backup schedule: %w", err)
 	}
+
+	nextRunAt := s.clock.Now().Add(s.cfg.ScheduleInterval)
 	if existing != nil {
+		if existing.NextRunAt.After(nextRunAt) {
+			if err := s.store.SetBackupScheduleNextRunAt(ctx, nextRunAt); err != nil {
+				return nil, false, fmt.Errorf("updating backup schedule: %w", err)
+			}
+			return &BackupSchedule{NextRunAt: nextRunAt}, false, nil
+		}
 		return existing, false, nil
 	}
 
-	nextRunAt := s.clock.Now().Add(s.cfg.ScheduleInterval)
 	if err := s.store.SetBackupScheduleNextRunAt(ctx, nextRunAt); err != nil {
 		return nil, false, fmt.Errorf("creating default backup schedule: %w", err)
 	}
