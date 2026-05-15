@@ -27,7 +27,6 @@ type workItemAPITestEnv struct {
 	ctx    context.Context
 	router http.Handler
 	svc    *workitem.Service
-	token  string
 }
 
 func newWorkItemAPITestEnv(t *testing.T) *workItemAPITestEnv {
@@ -65,11 +64,6 @@ func newWorkItemAPITestEnv(t *testing.T) *workItemAPITestEnv {
 	if _, err := be.CreateRepository(ctx, "alpha", user, proto.RepositoryOptions{}); err != nil {
 		t.Fatalf("CreateRepository: %v", err)
 	}
-	token, err := be.CreateAccessToken(ctx, user, "tasks", time.Now().Add(time.Hour))
-	if err != nil {
-		t.Fatalf("CreateAccessToken: %v", err)
-	}
-
 	svc := workitem.NewService(memstore.New(), fixedWorkItemAPIClock{now: time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)})
 	be.SetWorkItemService(svc)
 
@@ -79,7 +73,7 @@ func newWorkItemAPITestEnv(t *testing.T) *workItemAPITestEnv {
 		router.ServeHTTP(w, r.WithContext(ctx))
 	})
 
-	return &workItemAPITestEnv{ctx: ctx, router: wrapped, svc: svc, token: token}
+	return &workItemAPITestEnv{ctx: ctx, router: wrapped, svc: svc}
 }
 
 func TestWorkItemAPI_CreateListAndMove(t *testing.T) {
@@ -87,7 +81,6 @@ func TestWorkItemAPI_CreateListAndMove(t *testing.T) {
 
 	createBody := bytes.NewBufferString(`{"title":"Build task board","description":"API-backed swimlanes"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/repos/alpha/work-items", createBody)
-	req.Header.Set("Authorization", "Token "+env.token)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	env.router.ServeHTTP(rec, req)
@@ -118,7 +111,6 @@ func TestWorkItemAPI_CreateListAndMove(t *testing.T) {
 
 	moveBody := bytes.NewBufferString(`{"lane":"wip"}`)
 	req = httptest.NewRequest(http.MethodPatch, "/api/v1/repos/alpha/work-items/1", moveBody)
-	req.Header.Set("Authorization", "Token "+env.token)
 	req.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()
 	env.router.ServeHTTP(rec, req)
@@ -134,7 +126,7 @@ func TestWorkItemAPI_CreateListAndMove(t *testing.T) {
 	}
 }
 
-func TestWorkItemAPI_CreateRequiresWriteAccess(t *testing.T) {
+func TestWorkItemAPI_CreateAllowsAnonymousAccess(t *testing.T) {
 	env := newWorkItemAPITestEnv(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/repos/alpha/work-items", bytes.NewBufferString(`{"title":"No token"}`))
@@ -142,8 +134,8 @@ func TestWorkItemAPI_CreateRequiresWriteAccess(t *testing.T) {
 	rec := httptest.NewRecorder()
 	env.router.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", rec.Code)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body:\n%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -154,7 +146,85 @@ func TestWorkItemAPI_MoveRejectsInvalidLane(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/repos/alpha/work-items/1", bytes.NewBufferString(`{"lane":"review"}`))
-	req.Header.Set("Authorization", "Token "+env.token)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	env.router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body:\n%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestWorkItemAPI_GetMessagesIncludesOpeningCard(t *testing.T) {
+	env := newWorkItemAPITestEnv(t)
+	item, err := env.svc.Create(env.ctx, "alpha", "Build task board", "API-backed swimlanes")
+	if err != nil {
+		t.Fatalf("seed item: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/repos/alpha/work-items/1/messages", nil)
+	rec := httptest.NewRecorder()
+	env.router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body:\n%s", rec.Code, rec.Body.String())
+	}
+	var messages []workItemMessageDTO
+	if err := json.NewDecoder(rec.Body).Decode(&messages); err != nil {
+		t.Fatalf("decode messages: %v", err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("messages = %#v, want opening message", messages)
+	}
+	if messages[0].Kind != "card" || messages[0].WorkItemID != item.ID || messages[0].Title != "Build task board" || messages[0].Body != "API-backed swimlanes" {
+		t.Fatalf("opening message = %#v", messages[0])
+	}
+}
+
+func TestWorkItemAPI_AddMessageAppendsComment(t *testing.T) {
+	env := newWorkItemAPITestEnv(t)
+	if _, err := env.svc.Create(env.ctx, "alpha", "Build task board", "API-backed swimlanes"); err != nil {
+		t.Fatalf("seed item: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/repos/alpha/work-items/1/messages", bytes.NewBufferString(`{"body":"First follow-up"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	env.router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body:\n%s", rec.Code, rec.Body.String())
+	}
+	var created workItemMessageDTO
+	if err := json.NewDecoder(rec.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created: %v", err)
+	}
+	if created.Kind != "comment" || created.Body != "First follow-up" {
+		t.Fatalf("created = %#v", created)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/repos/alpha/work-items/1/messages", nil)
+	rec = httptest.NewRecorder()
+	env.router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status = %d, body:\n%s", rec.Code, rec.Body.String())
+	}
+	var messages []workItemMessageDTO
+	if err := json.NewDecoder(rec.Body).Decode(&messages); err != nil {
+		t.Fatalf("decode messages: %v", err)
+	}
+	if len(messages) != 2 || messages[1].Body != "First follow-up" {
+		t.Fatalf("messages = %#v", messages)
+	}
+}
+
+func TestWorkItemAPI_AddMessageRejectsBlankBody(t *testing.T) {
+	env := newWorkItemAPITestEnv(t)
+	if _, err := env.svc.Create(env.ctx, "alpha", "Build task board", "API-backed swimlanes"); err != nil {
+		t.Fatalf("seed item: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/repos/alpha/work-items/1/messages", bytes.NewBufferString(`{"body":"  "}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	env.router.ServeHTTP(rec, req)

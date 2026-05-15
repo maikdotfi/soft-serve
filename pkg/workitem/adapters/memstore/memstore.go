@@ -10,15 +10,20 @@ import (
 )
 
 type Store struct {
-	mu     sync.Mutex
-	items  map[int64]workitem.WorkItem
-	nextID int64
+	mu          sync.Mutex
+	items       map[int64]workitem.WorkItem
+	messages    map[int64][]workitem.WorkItemMessage
+	nextID      int64
+	nextMessage int64
 }
 
 var _ workitem.Store = (*Store)(nil)
 
 func New() *Store {
-	return &Store{items: map[int64]workitem.WorkItem{}}
+	return &Store{
+		items:    map[int64]workitem.WorkItem{},
+		messages: map[int64][]workitem.WorkItemMessage{},
+	}
 }
 
 func (s *Store) Create(_ context.Context, item workitem.WorkItem) (*workitem.WorkItem, error) {
@@ -71,6 +76,36 @@ func (s *Store) UpdateLane(_ context.Context, repoName string, id int64, lane wo
 	s.items[item.ID] = item
 	out := item
 	return &out, nil
+}
+
+func (s *Store) AddMessage(_ context.Context, message workitem.WorkItemMessage) (*workitem.WorkItemMessage, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	item, ok := s.items[message.WorkItemID]
+	if !ok || item.RepoName != message.RepoName {
+		return nil, workitem.ErrWorkItemNotFound
+	}
+	s.nextMessage++
+	message.ID = s.nextMessage
+	s.messages[message.WorkItemID] = append(s.messages[message.WorkItemID], message)
+	out := message
+	return &out, nil
+}
+
+func (s *Store) ListMessages(_ context.Context, repoName string, workItemID int64) ([]workitem.WorkItemMessage, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	item, ok := s.items[workItemID]
+	if !ok || item.RepoName != repoName {
+		return nil, workitem.ErrWorkItemNotFound
+	}
+	out := append([]workitem.WorkItemMessage(nil), s.messages[workItemID]...)
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].ID < out[j].ID
+	})
+	return out, nil
 }
 
 func sortWorkItems(items []workitem.WorkItem) {

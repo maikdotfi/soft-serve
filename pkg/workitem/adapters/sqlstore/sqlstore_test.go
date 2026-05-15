@@ -31,6 +31,8 @@ func TestStore_Contract(t *testing.T) {
 	seedRepo(t, ctx, dbx, "beta")
 	seedRepo(t, ctx, dbx, "ordered")
 	seedRepo(t, ctx, dbx, "move")
+	seedRepo(t, ctx, dbx, "message-alpha")
+	seedRepo(t, ctx, dbx, "message-beta")
 
 	workitemtest.RunStoreContract(t, sqlstore.New(dbx))
 }

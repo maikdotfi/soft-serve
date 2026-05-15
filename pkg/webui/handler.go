@@ -52,7 +52,9 @@ type pageData struct {
 	Commits         []repobrowser.CommitInfo
 	Backup          backupbrowser.Overview
 	WorkItemLanes   []workItemLaneData
+	WorkItemThread  workitembrowser.WorkItemThread
 	WorkItemAPIPath string
+	MessageAPIPath  string
 
 	// error.html only.
 	Code   string
@@ -76,6 +78,7 @@ func (h *Handler) routes() http.Handler {
 	r.HandleFunc("/r/{name}", h.handleRepo).Methods(http.MethodGet)
 	if h.workItems != nil {
 		r.HandleFunc("/r/{name}/tasks", h.handleRepoTasks).Methods(http.MethodGet)
+		r.HandleFunc("/r/{name}/tasks/{id:[0-9]+}", h.handleRepoTask).Methods(http.MethodGet)
 	}
 	r.HandleFunc("/r/{name}/tree/{ref}", h.handleTree).Methods(http.MethodGet)
 	r.HandleFunc("/r/{name}/tree/{ref}/{path:.*}", h.handleTree).Methods(http.MethodGet)
@@ -166,6 +169,39 @@ func (h *Handler) handleRepoTasks(w http.ResponseWriter, r *http.Request) {
 	data.WorkItemLanes = groupWorkItemsByLane(items)
 	data.WorkItemAPIPath = "/api/v1/repos/" + name + "/work-items"
 	h.render(w, r, "tasks", data)
+}
+
+func (h *Handler) handleRepoTask(w http.ResponseWriter, r *http.Request) {
+	if h.workItems == nil {
+		h.notFound(w, r, "page not found", r.URL.Path)
+		return
+	}
+	name := mux.Vars(r)["name"]
+	info, ok := h.lookupRepo(w, r, name)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(mux.Vars(r)["id"], 10, 64)
+	if err != nil {
+		h.notFound(w, r, "work item not found", mux.Vars(r)["id"])
+		return
+	}
+	thread, err := h.workItems.Thread(r.Context(), name, id)
+	if err != nil {
+		if errors.Is(err, workitembrowser.ErrWorkItemNotFound) {
+			h.notFound(w, r, "work item not found", mux.Vars(r)["id"])
+			return
+		}
+		h.serverError(w, r, err)
+		return
+	}
+
+	data := h.envelope(thread.Item.Title, h.repoCount(r.Context()))
+	data.Repo = info
+	data.Ref = refOrDefault(info, "")
+	data.WorkItemThread = thread
+	data.MessageAPIPath = "/api/v1/repos/" + name + "/work-items/" + strconv.FormatInt(id, 10) + "/messages"
+	h.render(w, r, "task", data)
 }
 
 func (h *Handler) handleTree(w http.ResponseWriter, r *http.Request) {

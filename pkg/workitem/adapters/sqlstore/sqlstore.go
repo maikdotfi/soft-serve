@@ -101,6 +101,67 @@ func (s *Store) UpdateLane(ctx context.Context, repoName string, id int64, lane 
 	return s.Get(ctx, repoName, id)
 }
 
+func (s *Store) AddMessage(ctx context.Context, message workitem.WorkItemMessage) (*workitem.WorkItemMessage, error) {
+	var id int64
+	err := s.db.TransactionContext(ctx, func(tx *db.Tx) error {
+		workItemID, err := workItemIDByRepo(ctx, tx, message.RepoName, message.WorkItemID)
+		if err != nil {
+			return err
+		}
+		query := tx.Rebind(`INSERT INTO work_item_messages
+			(work_item_id, kind, body, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?)
+			RETURNING id;`)
+		if err := tx.GetContext(ctx, &id, query,
+			workItemID, string(message.Kind), message.Body, message.CreatedAt, message.UpdatedAt,
+		); err != nil {
+			insert := tx.Rebind(`INSERT INTO work_item_messages
+				(work_item_id, kind, body, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?);`)
+			result, ierr := tx.ExecContext(ctx, insert,
+				workItemID, string(message.Kind), message.Body, message.CreatedAt, message.UpdatedAt,
+			)
+			if ierr != nil {
+				return db.WrapError(ierr)
+			}
+			id, _ = result.LastInsertId()
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	messages, err := s.ListMessages(ctx, message.RepoName, message.WorkItemID)
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range messages {
+		if m.ID == id {
+			out := m
+			return &out, nil
+		}
+	}
+	return nil, workitem.ErrWorkItemNotFound
+}
+
+func (s *Store) ListMessages(ctx context.Context, repoName string, workItemID int64) ([]workitem.WorkItemMessage, error) {
+	if _, err := workItemIDByRepo(ctx, s.db, repoName, workItemID); err != nil {
+		return nil, err
+	}
+
+	var rows []messageRow
+	query := s.db.Rebind(messageSelectSQL + ` WHERE r.name = ? AND wi.id = ?
+		ORDER BY wim.id ASC;`)
+	if err := s.db.SelectContext(ctx, &rows, query, repoName, workItemID); err != nil {
+		return nil, db.WrapError(err)
+	}
+	messages := make([]workitem.WorkItemMessage, 0, len(rows))
+	for _, row := range rows {
+		messages = append(messages, row.toWorkItemMessage())
+	}
+	return messages, nil
+}
+
 const itemSelectSQL = `SELECT
 	wi.id,
 	r.name AS repo_name,
@@ -134,6 +195,40 @@ func (r itemRow) toWorkItem() workitem.WorkItem {
 	}
 }
 
+const messageSelectSQL = `SELECT
+		wim.id,
+		r.name AS repo_name,
+		wi.id AS work_item_id,
+		wim.kind,
+		wim.body,
+		wim.created_at,
+		wim.updated_at
+		FROM work_item_messages wim
+		JOIN work_items wi ON wi.id = wim.work_item_id
+		JOIN repos r ON r.id = wi.repo_id`
+
+type messageRow struct {
+	ID         int64     `db:"id"`
+	RepoName   string    `db:"repo_name"`
+	WorkItemID int64     `db:"work_item_id"`
+	Kind       string    `db:"kind"`
+	Body       string    `db:"body"`
+	CreatedAt  time.Time `db:"created_at"`
+	UpdatedAt  time.Time `db:"updated_at"`
+}
+
+func (r messageRow) toWorkItemMessage() workitem.WorkItemMessage {
+	return workitem.WorkItemMessage{
+		ID:         r.ID,
+		RepoName:   r.RepoName,
+		WorkItemID: r.WorkItemID,
+		Kind:       workitem.MessageKind(r.Kind),
+		Body:       r.Body,
+		CreatedAt:  r.CreatedAt,
+		UpdatedAt:  r.UpdatedAt,
+	}
+}
+
 func repoIDByName(ctx context.Context, h db.Handler, name string) (int64, error) {
 	var id int64
 	query := h.Rebind(`SELECT id FROM repos WHERE name = ?;`)
@@ -144,4 +239,19 @@ func repoIDByName(ctx context.Context, h db.Handler, name string) (int64, error)
 		return 0, db.WrapError(err)
 	}
 	return id, nil
+}
+
+func workItemIDByRepo(ctx context.Context, h db.Handler, repoName string, id int64) (int64, error) {
+	var found int64
+	query := h.Rebind(`SELECT wi.id
+		FROM work_items wi
+		JOIN repos r ON r.id = wi.repo_id
+		WHERE r.name = ? AND wi.id = ?;`)
+	if err := h.GetContext(ctx, &found, query, repoName, id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, workitem.ErrWorkItemNotFound
+		}
+		return 0, db.WrapError(err)
+	}
+	return found, nil
 }

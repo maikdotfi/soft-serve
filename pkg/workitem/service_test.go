@@ -85,6 +85,94 @@ func TestService_Move_RejectsInvalidLane(t *testing.T) {
 	}
 }
 
+func TestService_Thread_IncludesOpeningCardMessage(t *testing.T) {
+	createdAt := time.Date(2026, 5, 15, 10, 0, 0, 0, time.UTC)
+	updatedAt := time.Date(2026, 5, 15, 11, 0, 0, 0, time.UTC)
+	store := &stubStore{
+		items: map[int64]WorkItem{
+			7: {
+				ID:          7,
+				RepoName:    "alpha",
+				Title:       "Build task board",
+				Description: "API-backed swimlanes",
+				Lane:        LaneBacklog,
+				CreatedAt:   createdAt,
+				UpdatedAt:   updatedAt,
+			},
+		},
+		messages: map[int64][]WorkItemMessage{
+			7: {
+				{
+					ID:         4,
+					RepoName:   "alpha",
+					WorkItemID: 7,
+					Kind:       MessageKindComment,
+					Body:       "First follow-up",
+					CreatedAt:  updatedAt,
+					UpdatedAt:  updatedAt,
+				},
+			},
+		},
+	}
+	svc := NewService(store, fixedClock{now: updatedAt})
+
+	thread, err := svc.Thread(context.Background(), "alpha", 7)
+	if err != nil {
+		t.Fatalf("Thread: %v", err)
+	}
+
+	if thread.Item.ID != 7 {
+		t.Fatalf("thread item ID = %d, want 7", thread.Item.ID)
+	}
+	if len(thread.Messages) != 2 {
+		t.Fatalf("messages = %#v, want opening message plus comment", thread.Messages)
+	}
+	opening := thread.Messages[0]
+	if opening.Kind != MessageKindCard || opening.Title != "Build task board" || opening.Body != "API-backed swimlanes" {
+		t.Fatalf("opening message = %#v", opening)
+	}
+	comment := thread.Messages[1]
+	if comment.Kind != MessageKindComment || comment.Body != "First follow-up" {
+		t.Fatalf("comment message = %#v", comment)
+	}
+}
+
+func TestService_AddMessage_TrimsAndTimestampsComment(t *testing.T) {
+	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+	store := &stubStore{
+		items: map[int64]WorkItem{
+			7: {ID: 7, RepoName: "alpha", Title: "Build task board", Lane: LaneBacklog, CreatedAt: now, UpdatedAt: now},
+		},
+	}
+	svc := NewService(store, fixedClock{now: now})
+
+	message, err := svc.AddMessage(context.Background(), "alpha", 7, "  Ship it  ")
+	if err != nil {
+		t.Fatalf("AddMessage: %v", err)
+	}
+
+	if message.WorkItemID != 7 || message.RepoName != "alpha" {
+		t.Fatalf("message scope = %#v", message)
+	}
+	if message.Kind != MessageKindComment {
+		t.Fatalf("message kind = %q, want comment", message.Kind)
+	}
+	if message.Body != "Ship it" {
+		t.Fatalf("message body = %q, want trimmed body", message.Body)
+	}
+	if !message.CreatedAt.Equal(now) || !message.UpdatedAt.Equal(now) {
+		t.Fatalf("timestamps = %s/%s, want %s", message.CreatedAt, message.UpdatedAt, now)
+	}
+}
+
+func TestService_AddMessage_RejectsBlankBody(t *testing.T) {
+	svc := NewService(&stubStore{}, fixedClock{now: time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)})
+
+	if _, err := svc.AddMessage(context.Background(), "alpha", 7, "  "); !errors.Is(err, ErrInvalidMessage) {
+		t.Fatalf("AddMessage error = %v, want ErrInvalidMessage", err)
+	}
+}
+
 type fixedClock struct {
 	now time.Time
 }
@@ -94,8 +182,10 @@ func (c fixedClock) Now() time.Time {
 }
 
 type stubStore struct {
-	items map[int64]WorkItem
-	next  int64
+	items       map[int64]WorkItem
+	messages    map[int64][]WorkItemMessage
+	next        int64
+	nextMessage int64
 }
 
 func (s *stubStore) Create(_ context.Context, item WorkItem) (*WorkItem, error) {
@@ -138,4 +228,27 @@ func (s *stubStore) UpdateLane(_ context.Context, repoName string, id int64, lan
 	s.items[id] = item
 	out := item
 	return &out, nil
+}
+
+func (s *stubStore) AddMessage(_ context.Context, message WorkItemMessage) (*WorkItemMessage, error) {
+	item, ok := s.items[message.WorkItemID]
+	if !ok || item.RepoName != message.RepoName {
+		return nil, ErrWorkItemNotFound
+	}
+	s.nextMessage++
+	message.ID = s.nextMessage
+	if s.messages == nil {
+		s.messages = map[int64][]WorkItemMessage{}
+	}
+	s.messages[message.WorkItemID] = append(s.messages[message.WorkItemID], message)
+	out := message
+	return &out, nil
+}
+
+func (s *stubStore) ListMessages(_ context.Context, repoName string, workItemID int64) ([]WorkItemMessage, error) {
+	item, ok := s.items[workItemID]
+	if !ok || item.RepoName != repoName {
+		return nil, ErrWorkItemNotFound
+	}
+	return append([]WorkItemMessage(nil), s.messages[workItemID]...), nil
 }

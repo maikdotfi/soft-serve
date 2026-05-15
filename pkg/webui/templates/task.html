@@ -1,0 +1,58 @@
+{{define "page"}}
+{{template "_repoheader" .}}
+
+<section class="taskthread" data-work-item-thread data-api="{{.MessageAPIPath}}">
+  <div class="panel__title taskthread__title">
+    <span class="panel__lead">[ work item ]</span>
+    <a class="panel__more" href="{{.BasePath}}/r/{{.Repo.Name}}/tasks"
+       hx-get="{{.BasePath}}/r/{{.Repo.Name}}/tasks" hx-target="#content" hx-select="#content > *"
+       hx-swap="innerHTML" hx-push-url="true" hx-indicator="#net-indicator">board -></a>
+  </div>
+
+  <div class="taskthread__head">
+    <h2>{{.WorkItemThread.Item.Title}}</h2>
+    <span class="tag tag--branch">{{.WorkItemThread.Item.Lane}}</span>
+  </div>
+
+  <ol class="threadlist">
+    {{range .WorkItemThread.Messages}}
+      <li class="threadmsg threadmsg--{{.Kind}}">
+        <header class="threadmsg__meta">
+          <span>{{if eq .Kind "card"}}opened{{else}}commented{{end}}</span>
+          <time>{{shortdate .CreatedAt}}</time>
+        </header>
+        {{if .Title}}<h3>{{.Title}}</h3>{{end}}
+        {{if .Body}}<p>{{.Body}}</p>{{else}}<p class="dim">// no description</p>{{end}}
+      </li>
+    {{end}}
+  </ol>
+
+  <form class="threadform" data-work-item-comment>
+    <textarea name="body" rows="4" maxlength="4000" placeholder="add a comment" aria-label="comment" required></textarea>
+    <button type="submit">comment</button>
+  </form>
+</section>
+
+<script>
+(() => {
+  const thread = document.querySelector("[data-work-item-thread]");
+  if (!thread || thread.dataset.bound === "true") return;
+  thread.dataset.bound = "true";
+  const api = thread.dataset.api;
+
+  thread.addEventListener("submit", async (event) => {
+    const form = event.target.closest("[data-work-item-comment]");
+    if (!form) return;
+    event.preventDefault();
+    const data = new FormData(form);
+    const res = await fetch(api, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {"Content-Type": "application/json", "Accept": "application/json"},
+      body: JSON.stringify({body: String(data.get("body") || "")})
+    });
+    if (res.ok) window.location.reload();
+  });
+})();
+</script>
+{{end}}

@@ -23,7 +23,10 @@
         <div class="swimlane__items">
           {{range .Items}}
             <article class="taskcard" data-work-item-id="{{.ID}}">
-              <h3>{{.Title}}</h3>
+              <h3><a href="{{$.BasePath}}/r/{{$.Repo.Name}}/tasks/{{.ID}}"
+                     hx-get="{{$.BasePath}}/r/{{$.Repo.Name}}/tasks/{{.ID}}"
+                     hx-target="#content" hx-select="#content > *"
+                     hx-swap="innerHTML" hx-push-url="true" hx-indicator="#net-indicator">{{.Title}}</a></h3>
               {{if .Description}}<p>{{.Description}}</p>{{end}}
               <div class="taskcard__actions" aria-label="move work item">
                 <button type="button" data-work-item-move data-id="{{.ID}}" data-lane="backlog">backlog</button>

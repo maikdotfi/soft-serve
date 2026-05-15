@@ -132,6 +132,49 @@ func newTestHandlerWithWorkItems(t *testing.T) http.Handler {
 	return h
 }
 
+func newTestHandlerWithWorkItemThread(t *testing.T) http.Handler {
+	t.Helper()
+	updated := time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC)
+	browser := fake.New([]*fake.Repo{
+		{
+			Info: repobrowser.RepoInfo{
+				Name:          "alpha",
+				ProjectName:   "Alpha Project",
+				Description:   "first test repo",
+				DefaultBranch: "main",
+				UpdatedAt:     updated,
+			},
+			Files: map[string][]byte{"README.md": []byte("# Alpha\n")},
+		},
+	})
+	workItems := workitemfake.NewWithMessages(
+		map[string][]workitembrowser.WorkItem{
+			"alpha": {
+				{
+					ID:          1,
+					Title:       "Shape task domain",
+					Description: "Thread starts with the card description",
+					Lane:        workitembrowser.LaneBacklog,
+					CreatedAt:   updated,
+					UpdatedAt:   updated,
+				},
+			},
+		},
+		map[string]map[int64][]workitembrowser.WorkItemMessage{
+			"alpha": {
+				1: {
+					{ID: 2, WorkItemID: 1, Kind: workitembrowser.MessageKindComment, Body: "First follow-up", CreatedAt: updated, UpdatedAt: updated},
+				},
+			},
+		},
+	)
+	h, err := webui.NewHandler(browser, webui.WithWorkItemReader(workItems))
+	if err != nil {
+		t.Fatalf("NewHandler: %v", err)
+	}
+	return h
+}
+
 func get(t *testing.T, h http.Handler, path string) (*httptest.ResponseRecorder, string) {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, path, nil)
@@ -283,7 +326,27 @@ func TestRepoTasksPage_ShowsSwimlanesAndAPIActions(t *testing.T) {
 		"Shape task domain",
 		"Wire API moves",
 		"Render board",
+		"/r/alpha/tasks/1",
 		"/api/v1/repos/alpha/work-items",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestRepoTaskThreadPage_ShowsOpeningMessageCommentsAndCommentForm(t *testing.T) {
+	h := newTestHandlerWithWorkItemThread(t)
+	rec, body := get(t, h, "/r/alpha/tasks/1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body:\n%s", rec.Code, body)
+	}
+	for _, want := range []string{
+		"Shape task domain",
+		"Thread starts with the card description",
+		"First follow-up",
+		"/api/v1/repos/alpha/work-items/1/messages",
+		"data-work-item-comment",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("body missing %q:\n%s", want, body)

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"charm.land/log/v2"
-	"github.com/charmbracelet/soft-serve/pkg/access"
 	"github.com/charmbracelet/soft-serve/pkg/backend"
 	"github.com/charmbracelet/soft-serve/pkg/proto"
 	"github.com/charmbracelet/soft-serve/pkg/workitem"
@@ -24,6 +23,8 @@ func WorkItemController(_ context.Context, r *mux.Router) {
 	api.HandleFunc("", workItemCreate).Methods(http.MethodPost)
 	api.HandleFunc("/", workItemCreate).Methods(http.MethodPost)
 	api.HandleFunc("/{id:[0-9]+}", workItemMove).Methods(http.MethodPatch)
+	api.HandleFunc("/{id:[0-9]+}/messages", workItemMessages).Methods(http.MethodGet)
+	api.HandleFunc("/{id:[0-9]+}/messages", workItemAddMessage).Methods(http.MethodPost)
 }
 
 type workItemDTO struct {
@@ -36,8 +37,19 @@ type workItemDTO struct {
 	UpdatedAt   string `json:"updated_at"`
 }
 
+type workItemMessageDTO struct {
+	ID         int64  `json:"id"`
+	RepoName   string `json:"repo_name"`
+	WorkItemID int64  `json:"work_item_id"`
+	Kind       string `json:"kind"`
+	Title      string `json:"title"`
+	Body       string `json:"body"`
+	CreatedAt  string `json:"created_at"`
+	UpdatedAt  string `json:"updated_at"`
+}
+
 func workItemList(w http.ResponseWriter, r *http.Request) {
-	svc, repoName, ctx, ok := workItemServiceAndAccess(w, r, access.ReadOnlyAccess)
+	svc, repoName, ctx, ok := workItemServiceAndRepo(w, r)
 	if !ok {
 		return
 	}
@@ -54,7 +66,7 @@ func workItemList(w http.ResponseWriter, r *http.Request) {
 }
 
 func workItemCreate(w http.ResponseWriter, r *http.Request) {
-	svc, repoName, ctx, ok := workItemServiceAndAccess(w, r, access.ReadWriteAccess)
+	svc, repoName, ctx, ok := workItemServiceAndRepo(w, r)
 	if !ok {
 		return
 	}
@@ -75,7 +87,7 @@ func workItemCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func workItemMove(w http.ResponseWriter, r *http.Request) {
-	svc, repoName, ctx, ok := workItemServiceAndAccess(w, r, access.ReadWriteAccess)
+	svc, repoName, ctx, ok := workItemServiceAndRepo(w, r)
 	if !ok {
 		return
 	}
@@ -98,7 +110,52 @@ func workItemMove(w http.ResponseWriter, r *http.Request) {
 	workItemWriteJSON(w, http.StatusOK, toWorkItemDTO(item))
 }
 
-func workItemServiceAndAccess(w http.ResponseWriter, r *http.Request, required access.AccessLevel) (*workitem.Service, string, context.Context, bool) {
+func workItemMessages(w http.ResponseWriter, r *http.Request) {
+	svc, repoName, ctx, ok := workItemServiceAndRepo(w, r)
+	if !ok {
+		return
+	}
+	id, ok := workItemIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	thread, err := svc.Thread(ctx, repoName, id)
+	if err != nil {
+		workItemTranslateError(w, r, err)
+		return
+	}
+	dtos := make([]workItemMessageDTO, 0, len(thread.Messages))
+	for _, message := range thread.Messages {
+		dtos = append(dtos, toWorkItemMessageDTO(message))
+	}
+	workItemWriteJSON(w, http.StatusOK, dtos)
+}
+
+func workItemAddMessage(w http.ResponseWriter, r *http.Request) {
+	svc, repoName, ctx, ok := workItemServiceAndRepo(w, r)
+	if !ok {
+		return
+	}
+	id, ok := workItemIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Body string `json:"body"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&body); err != nil {
+		http.Error(w, "invalid json body", http.StatusBadRequest)
+		return
+	}
+	message, err := svc.AddMessage(ctx, repoName, id, body.Body)
+	if err != nil {
+		workItemTranslateError(w, r, err)
+		return
+	}
+	workItemWriteJSON(w, http.StatusCreated, toWorkItemMessageDTO(message))
+}
+
+func workItemServiceAndRepo(w http.ResponseWriter, r *http.Request) (*workitem.Service, string, context.Context, bool) {
 	be := backend.FromContext(r.Context())
 	if be == nil || be.WorkItemService() == nil {
 		http.Error(w, "work item subsystem not configured", http.StatusServiceUnavailable)
@@ -117,33 +174,6 @@ func workItemServiceAndAccess(w http.ResponseWriter, r *http.Request, required a
 	}
 
 	ctx := proto.WithRepositoryContext(r.Context(), repo)
-	reqWithRepo := r.WithContext(ctx)
-
-	user, err := authenticate(reqWithRepo)
-	if err != nil {
-		switch {
-		case errors.Is(err, ErrInvalidHeader), errors.Is(err, proto.ErrUserNotFound):
-			user = nil
-		default:
-			askCredentials(w, r)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return nil, "", nil, false
-		}
-	}
-
-	if be.AccessLevelForUser(ctx, repoName, user) < required {
-		if user == nil {
-			askCredentials(w, r)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return nil, "", nil, false
-		}
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return nil, "", nil, false
-	}
-
-	if user != nil {
-		ctx = proto.WithUserContext(ctx, user)
-	}
 	return be.WorkItemService(), repoName, ctx, true
 }
 
@@ -160,6 +190,8 @@ func workItemTranslateError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, workitem.ErrInvalidTitle):
 		http.Error(w, "invalid title", http.StatusBadRequest)
+	case errors.Is(err, workitem.ErrInvalidMessage):
+		http.Error(w, "invalid message", http.StatusBadRequest)
 	case errors.Is(err, workitem.ErrInvalidLane):
 		http.Error(w, "invalid lane", http.StatusBadRequest)
 	case errors.Is(err, workitem.ErrWorkItemNotFound):
@@ -192,6 +224,19 @@ func toWorkItemDTO(item workitem.WorkItem) workItemDTO {
 		Lane:        string(item.Lane),
 		CreatedAt:   formatWorkItemTime(item.CreatedAt),
 		UpdatedAt:   formatWorkItemTime(item.UpdatedAt),
+	}
+}
+
+func toWorkItemMessageDTO(message workitem.WorkItemMessage) workItemMessageDTO {
+	return workItemMessageDTO{
+		ID:         message.ID,
+		RepoName:   message.RepoName,
+		WorkItemID: message.WorkItemID,
+		Kind:       string(message.Kind),
+		Title:      message.Title,
+		Body:       message.Body,
+		CreatedAt:  formatWorkItemTime(message.CreatedAt),
+		UpdatedAt:  formatWorkItemTime(message.UpdatedAt),
 	}
 }
 
