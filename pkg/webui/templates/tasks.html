@@ -1,0 +1,81 @@
+{{define "page"}}
+{{template "_repoheader" .}}
+
+<section class="taskboard" data-work-item-board data-api="{{.WorkItemAPIPath}}">
+  <div class="panel__title taskboard__title">
+    <span class="panel__lead">[ work items ]</span>
+    <span class="panel__path">{{.Repo.Name}}</span>
+  </div>
+
+  <form class="taskform" data-work-item-create>
+    <input class="taskform__title" name="title" type="text" maxlength="160" placeholder="new work item" aria-label="new work item title" required>
+    <input class="taskform__description" name="description" type="text" maxlength="500" placeholder="description" aria-label="new work item description">
+    <button class="taskform__submit" type="submit">add</button>
+  </form>
+
+  <div class="swimlanes">
+    {{range .WorkItemLanes}}
+      <section class="swimlane" data-lane="{{.Lane}}">
+        <header class="swimlane__head">
+          <h2>{{.Lane}}</h2>
+          <span class="swimlane__count">{{len .Items}}</span>
+        </header>
+        <div class="swimlane__items">
+          {{range .Items}}
+            <article class="taskcard" data-work-item-id="{{.ID}}">
+              <h3>{{.Title}}</h3>
+              {{if .Description}}<p>{{.Description}}</p>{{end}}
+              <div class="taskcard__actions" aria-label="move work item">
+                <button type="button" data-work-item-move data-id="{{.ID}}" data-lane="backlog">backlog</button>
+                <button type="button" data-work-item-move data-id="{{.ID}}" data-lane="wip">wip</button>
+                <button type="button" data-work-item-move data-id="{{.ID}}" data-lane="done">done</button>
+              </div>
+            </article>
+          {{else}}
+            <div class="empty">// no work items</div>
+          {{end}}
+        </div>
+      </section>
+    {{end}}
+  </div>
+</section>
+
+<script>
+(() => {
+  const board = document.querySelector("[data-work-item-board]");
+  if (!board || board.dataset.bound === "true") return;
+  board.dataset.bound = "true";
+  const api = board.dataset.api;
+  const reload = () => window.location.reload();
+
+  board.addEventListener("submit", async (event) => {
+    const form = event.target.closest("[data-work-item-create]");
+    if (!form) return;
+    event.preventDefault();
+    const data = new FormData(form);
+    const res = await fetch(api, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {"Content-Type": "application/json", "Accept": "application/json"},
+      body: JSON.stringify({
+        title: String(data.get("title") || ""),
+        description: String(data.get("description") || "")
+      })
+    });
+    if (res.ok) reload();
+  });
+
+  board.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-work-item-move]");
+    if (!button) return;
+    const res = await fetch(`${api}/${button.dataset.id}`, {
+      method: "PATCH",
+      credentials: "same-origin",
+      headers: {"Content-Type": "application/json", "Accept": "application/json"},
+      body: JSON.stringify({lane: button.dataset.lane})
+    });
+    if (res.ok) reload();
+  });
+})();
+</script>
+{{end}}

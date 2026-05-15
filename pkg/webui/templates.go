@@ -24,7 +24,7 @@ type pageTemplate struct {
 // that by parsing the layout + partials together with the page-specific
 // definition of "page".
 func loadTemplates(fsys embed.FS) (map[string]*pageTemplate, error) {
-	pages := []string{"repos", "repo", "tree", "blob", "log", "backups", "error"}
+	pages := []string{"repos", "repo", "tree", "blob", "log", "backups", "tasks", "error"}
 	out := make(map[string]*pageTemplate, len(pages))
 
 	// Files that contribute partials shared across pages.

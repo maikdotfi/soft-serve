@@ -24,7 +24,11 @@ func NewRouter(ctx context.Context) http.Handler {
 	// path matching.
 	CIController(ctx, router)
 
-	// Read-only HTML browser at /ui
+	// Repository work-item JSON API. Mounted before Git routes so the
+	// /api/v1/repos/... prefix cannot be interpreted as a repository path.
+	WorkItemController(ctx, router)
+
+	// HTML browser at /ui
 	WebUIController(ctx, router)
 
 	// Git routes

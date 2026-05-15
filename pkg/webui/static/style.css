@@ -518,6 +518,129 @@ a:hover { color: var(--phosphor-bright); }
 .logrow__meta strong { color: var(--text); font-weight: 500; }
 
 /* ---------------------------------------------------------
+   Work item board
+   --------------------------------------------------------- */
+
+.taskboard {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.taskboard__title {
+  margin-bottom: 0;
+}
+
+.taskform {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(220px, 1.4fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--radius);
+}
+
+.taskform input {
+  width: 100%;
+  min-width: 0;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+}
+.taskform input:focus {
+  outline: none;
+  border-color: var(--cyan);
+}
+
+.taskform__submit,
+.taskcard__actions button {
+  min-height: 34px;
+  color: var(--text);
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.taskform__submit:hover,
+.taskcard__actions button:hover {
+  color: var(--phosphor-bright);
+  border-color: var(--phosphor-dim);
+}
+
+.swimlanes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+.swimlane {
+  min-width: 0;
+  border-top: 2px solid var(--border-strong);
+}
+.swimlane[data-lane="backlog"] { border-top-color: var(--cyan); }
+.swimlane[data-lane="wip"] { border-top-color: var(--amber); }
+.swimlane[data-lane="done"] { border-top-color: var(--phosphor); }
+
+.swimlane__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 10px 0;
+}
+.swimlane__head h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+}
+.swimlane__count {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.swimlane__items {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.taskcard {
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.taskcard h3 {
+  margin: 0;
+  color: var(--phosphor-bright);
+  font-size: 14px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.taskcard p {
+  margin: 7px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.taskcard__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+/* ---------------------------------------------------------
    Empty / error
    --------------------------------------------------------- */
 
@@ -582,5 +705,14 @@ a:hover { color: var(--phosphor-bright); }
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+  }
+}
+
+@media (max-width: 820px) {
+  .taskform {
+    grid-template-columns: 1fr;
+  }
+  .swimlanes {
+    grid-template-columns: 1fr;
   }
 }

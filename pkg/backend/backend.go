@@ -10,20 +10,22 @@ import (
 	"github.com/charmbracelet/soft-serve/pkg/db"
 	"github.com/charmbracelet/soft-serve/pkg/store"
 	"github.com/charmbracelet/soft-serve/pkg/task"
+	"github.com/charmbracelet/soft-serve/pkg/workitem"
 )
 
 // Backend is the Soft Serve backend that handles users, repositories, and
 // server settings management and operations.
 type Backend struct {
-	ctx     context.Context
-	cfg     *config.Config
-	db      *db.DB
-	store   store.Store
-	logger  *log.Logger
-	cache   *cache
-	manager *task.Manager
-	backup  *backup.BackupService
-	ci      *ci.Service
+	ctx       context.Context
+	cfg       *config.Config
+	db        *db.DB
+	store     store.Store
+	logger    *log.Logger
+	cache     *cache
+	manager   *task.Manager
+	backup    *backup.BackupService
+	ci        *ci.Service
+	workItems *workitem.Service
 }
 
 // New returns a new Soft Serve backend.
@@ -65,4 +67,14 @@ func (b *Backend) SetCIService(svc *ci.Service) {
 // CIService returns the CI service, or nil if not configured.
 func (b *Backend) CIService() *ci.Service {
 	return b.ci
+}
+
+// SetWorkItemService sets the repository work-item service on the backend.
+func (b *Backend) SetWorkItemService(svc *workitem.Service) {
+	b.workItems = svc
+}
+
+// WorkItemService returns the repository work-item service, or nil if not configured.
+func (b *Backend) WorkItemService() *workitem.Service {
+	return b.workItems
 }

@@ -47,7 +47,11 @@
     <span class="metaitem"><span class="metaitem__k">project</span><span class="metaitem__v">{{or .Repo.ProjectName "—"}}</span></span>
     <span class="metaitem"><span class="metaitem__k">updated</span><span class="metaitem__v">{{shortdate .Repo.UpdatedAt}}</span></span>
     <span class="metaitem"><span class="metaitem__k">default</span><span class="metaitem__v">{{or .Repo.DefaultBranch "HEAD"}}</span></span>
-    <span class="metaitem"><span class="metaitem__k">mode</span><span class="metaitem__v">read-only</span></span>
+    {{if .HasWorkItems}}<a class="metaitem metaitem--link" href="{{.BasePath}}/r/{{.Repo.Name}}/tasks"
+       hx-get="{{.BasePath}}/r/{{.Repo.Name}}/tasks" hx-target="#content" hx-select="#content > *"
+       hx-swap="innerHTML" hx-push-url="true" hx-indicator="#net-indicator">
+      <span class="metaitem__k">board</span><span class="metaitem__v">work items</span></a>{{end}}
+    <span class="metaitem"><span class="metaitem__k">mode</span><span class="metaitem__v">browser</span></span>
   </div>
 </header>
 {{end}}

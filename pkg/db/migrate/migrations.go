@@ -20,6 +20,7 @@ var migrations = []Migration{
 	migrateLfsObjects,
 	backup,
 	ci,
+	workItems,
 }
 
 func execMigration(ctx context.Context, tx *db.Tx, version int, name string, down bool) error {

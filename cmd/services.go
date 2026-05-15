@@ -15,11 +15,14 @@ import (
 	"github.com/charmbracelet/soft-serve/pkg/ci/adapters/cryptotokens"
 	"github.com/charmbracelet/soft-serve/pkg/ci/adapters/httpdispatch"
 	"github.com/charmbracelet/soft-serve/pkg/ci/adapters/realclock"
-	"github.com/charmbracelet/soft-serve/pkg/ci/adapters/sqlstore"
+	cisqlstore "github.com/charmbracelet/soft-serve/pkg/ci/adapters/sqlstore"
 	"github.com/charmbracelet/soft-serve/pkg/ci/adapters/yamlworkflows"
 	"github.com/charmbracelet/soft-serve/pkg/config"
 	"github.com/charmbracelet/soft-serve/pkg/db"
 	"github.com/charmbracelet/soft-serve/pkg/store"
+	"github.com/charmbracelet/soft-serve/pkg/workitem"
+	workitemrealclock "github.com/charmbracelet/soft-serve/pkg/workitem/adapters/realclock"
+	workitemsqlstore "github.com/charmbracelet/soft-serve/pkg/workitem/adapters/sqlstore"
 )
 
 // WireOptionalServices attaches the CI service to the Backend. It is
@@ -35,6 +38,7 @@ import (
 // WireBackupService directly.
 func WireOptionalServices(ctx context.Context, cfg *config.Config, be *backend.Backend, dbx *db.DB, st store.Store) error {
 	wireCIService(ctx, cfg, be, dbx)
+	wireWorkItemService(ctx, be, dbx)
 	return nil
 }
 
@@ -111,7 +115,7 @@ func wireCIService(ctx context.Context, cfg *config.Config, be *backend.Backend,
 	logger := log.FromContext(ctx).WithPrefix("ci")
 	svc := ci.NewService(
 		ci.DefaultConfig(),
-		sqlstore.New(dbx),
+		cisqlstore.New(dbx),
 		yamlworkflows.New(be),
 		httpdispatch.New(nil, cfg.HTTP.PublicURL),
 		cryptotokens.New(),
@@ -121,6 +125,12 @@ func wireCIService(ctx context.Context, cfg *config.Config, be *backend.Backend,
 	)
 	be.SetCIService(svc)
 	logger.Info("ci subsystem wired")
+}
+
+func wireWorkItemService(ctx context.Context, be *backend.Backend, dbx *db.DB) {
+	svc := workitem.NewService(workitemsqlstore.New(dbx), workitemrealclock.New())
+	be.SetWorkItemService(svc)
+	log.FromContext(ctx).WithPrefix("workitem").Info("work item subsystem wired")
 }
 
 // backendRepoProvider adapts a Backend to backup.RepoProvider, shared by

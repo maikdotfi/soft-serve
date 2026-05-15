@@ -1,14 +1,14 @@
-// Package webui is a fully backend-driven, read-only HTML browser for
-// soft-serve repositories.
+// Package webui is a fully backend-driven HTML browser for soft-serve
+// repositories.
 //
 // It is intentionally separate from the rest of the codebase: it depends
-// only on the repobrowser port (defined in repobrowser/) and on stdlib +
-// gorilla/mux (already required by pkg/web). Templates, CSS and HTMX are
-// the only client-side surface.
+// only on UI ports (defined under pkg/webui/) and on stdlib + gorilla/mux
+// (already required by pkg/web). Templates, CSS, HTMX and small local
+// scripts are the only client-side surface.
 //
 // Per AGENTS.md, this package never imports a concrete adapter. The
-// composition root constructs a repobrowser.Browser implementation and
-// passes it to NewHandler.
+// composition root constructs concrete implementations and passes them to
+// NewHandler.
 package webui
 
 import (
@@ -19,6 +19,7 @@ import (
 
 	"github.com/charmbracelet/soft-serve/pkg/webui/backupbrowser"
 	"github.com/charmbracelet/soft-serve/pkg/webui/repobrowser"
+	"github.com/charmbracelet/soft-serve/pkg/webui/workitembrowser"
 )
 
 //go:embed templates/*.html
@@ -46,7 +47,12 @@ func WithBackupReader(r backupbrowser.Reader) Option {
 	return func(h *Handler) { h.backups = r }
 }
 
-// NewHandler returns an http.Handler serving the read-only browser.
+// WithWorkItemReader enables the per-repository work-item board.
+func WithWorkItemReader(r workitembrowser.Reader) Option {
+	return func(h *Handler) { h.workItems = r }
+}
+
+// NewHandler returns an http.Handler serving the browser.
 //
 // The handler is self-contained: it owns its routes, templates and static
 // assets. It does not register itself on any external router; callers

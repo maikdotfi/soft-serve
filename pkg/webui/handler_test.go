@@ -12,6 +12,8 @@ import (
 	backupfake "github.com/charmbracelet/soft-serve/pkg/webui/backupbrowser/fake"
 	"github.com/charmbracelet/soft-serve/pkg/webui/repobrowser"
 	"github.com/charmbracelet/soft-serve/pkg/webui/repobrowser/fake"
+	"github.com/charmbracelet/soft-serve/pkg/webui/workitembrowser"
+	workitemfake "github.com/charmbracelet/soft-serve/pkg/webui/workitembrowser/fake"
 )
 
 func newTestHandler(t *testing.T) http.Handler {
@@ -95,6 +97,35 @@ func newTestHandlerWithBackups(t *testing.T) http.Handler {
 		},
 	})
 	h, err := webui.NewHandler(browser, webui.WithBackupReader(backups))
+	if err != nil {
+		t.Fatalf("NewHandler: %v", err)
+	}
+	return h
+}
+
+func newTestHandlerWithWorkItems(t *testing.T) http.Handler {
+	t.Helper()
+	updated := time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC)
+	browser := fake.New([]*fake.Repo{
+		{
+			Info: repobrowser.RepoInfo{
+				Name:          "alpha",
+				ProjectName:   "Alpha Project",
+				Description:   "first test repo",
+				DefaultBranch: "main",
+				UpdatedAt:     updated,
+			},
+			Files: map[string][]byte{"README.md": []byte("# Alpha\n")},
+		},
+	})
+	workItems := workitemfake.New(map[string][]workitembrowser.WorkItem{
+		"alpha": {
+			{ID: 1, Title: "Shape task domain", Lane: workitembrowser.LaneBacklog},
+			{ID: 2, Title: "Wire API moves", Lane: workitembrowser.LaneWIP},
+			{ID: 3, Title: "Render board", Lane: workitembrowser.LaneDone},
+		},
+	})
+	h, err := webui.NewHandler(browser, webui.WithWorkItemReader(workItems))
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}
@@ -235,6 +266,27 @@ func TestBackupsPage_ShowsStoredAndFailedBackupStatus(t *testing.T) {
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("backups page missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestRepoTasksPage_ShowsSwimlanesAndAPIActions(t *testing.T) {
+	h := newTestHandlerWithWorkItems(t)
+	rec, body := get(t, h, "/r/alpha/tasks")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body:\n%s", rec.Code, body)
+	}
+	for _, want := range []string{
+		"backlog",
+		"wip",
+		"done",
+		"Shape task domain",
+		"Wire API moves",
+		"Render board",
+		"/api/v1/repos/alpha/work-items",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body missing %q:\n%s", want, body)
 		}
 	}
 }
