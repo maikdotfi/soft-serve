@@ -11,14 +11,11 @@ import (
 	"syscall"
 	"time"
 
-	"charm.land/log/v2"
 	"github.com/charmbracelet/soft-serve/cmd"
 	"github.com/charmbracelet/soft-serve/pkg/backend"
 	"github.com/charmbracelet/soft-serve/pkg/config"
 	"github.com/charmbracelet/soft-serve/pkg/db"
 	"github.com/charmbracelet/soft-serve/pkg/db/migrate"
-	"github.com/charmbracelet/soft-serve/pkg/store"
-	"github.com/charmbracelet/soft-serve/pkg/webhook"
 	"github.com/spf13/cobra"
 )
 
@@ -72,28 +69,9 @@ var (
 				return fmt.Errorf("migration error: %w", err)
 			}
 
-			// Wire CI for both serve and the hook subprocess (the same
-			// call also runs in cmd/soft/hook/hook.go's PreRun). Backup
-			// is wired separately and only for serve, because backup is
-			// schedule-only and lives entirely in the long-running
-			// process.
-			be := backend.FromContext(ctx)
-			dbstore := store.FromContext(ctx)
-			if err := cmd.WireOptionalServices(ctx, cfg, be, db, dbstore); err != nil {
-				return fmt.Errorf("wire optional services: %w", err)
+			if err := cmd.WireServeServices(ctx); err != nil { // fork
+				return err
 			}
-			cmd.WireBackupService(ctx, cfg, be, db, dbstore)
-
-			// Serve-process-only side effects: the periodic backup
-			// schedule and the in-process webhook fan-out. Both rely
-			// on the long-running process.
-			if svc := be.BackupService(); svc != nil {
-				backupLogger := log.FromContext(ctx).WithPrefix("backup")
-				if err := svc.LogScheduleReady(ctx); err != nil {
-					backupLogger.Error("failed to prepare backup schedule", "err", err)
-				}
-			}
-			webhook.SetFiredEventHandler(be.OnWebhookFired)
 
 			s, err := NewServer(ctx)
 			if err != nil {

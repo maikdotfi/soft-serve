@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/soft-serve/pkg/db/migrate"
 	"github.com/charmbracelet/soft-serve/pkg/store"
 	"github.com/charmbracelet/soft-serve/pkg/store/database"
+	"github.com/charmbracelet/soft-serve/pkg/webhook"
 	"github.com/matryer/is"
 )
 
@@ -96,4 +97,57 @@ func newWiringTestContext(t *testing.T, backupEnabled bool) (context.Context, *d
 
 	st := database.New(ctx, dbx)
 	return ctx, dbx, cfg, st
+}
+
+// newServiceContext puts everything the context-driven wiring entry points
+// read into ctx, as serve and hook do before calling them.
+func newServiceContext(t *testing.T, backupEnabled bool) (context.Context, *backend.Backend) {
+	t.Helper()
+	ctx, dbx, cfg, st := newWiringTestContext(t, backupEnabled)
+	be := backend.New(ctx, cfg, dbx, st)
+	ctx = db.WithContext(ctx, dbx)
+	ctx = store.WithContext(ctx, st)
+	ctx = backend.WithContext(ctx, be)
+	return ctx, be
+}
+
+// TestWireHookServices_WiresCIOnly pins what the hook subprocess gets.
+func TestWireHookServices_WiresCIOnly(t *testing.T) {
+	is := is.New(t)
+	ctx, be := newServiceContext(t, true)
+
+	is.NoErr(WireHookServices(ctx))
+
+	is.True(be.CIService() != nil)     // pre-receive validation needs CI
+	is.True(be.BackupService() == nil) // backup never runs in the hook
+}
+
+// TestWireServeServices_WiresCIBackupAndSchedule pins the serve process wiring.
+func TestWireServeServices_WiresCIBackupAndSchedule(t *testing.T) {
+	is := is.New(t)
+	ctx, be := newServiceContext(t, true)
+	t.Cleanup(webhook.ClearFiredEventHandler)
+
+	is.NoErr(WireServeServices(ctx))
+
+	is.True(be.CIService() != nil)
+	is.True(be.BackupService() != nil)
+	_, err := store.FromContext(ctx).GetBackupSchedule(ctx, db.FromContext(ctx))
+	is.NoErr(err) // the default schedule is created at startup
+}
+
+// TestWireServeServices_RoutesFiredWebhooksToBackend verifies serve replaces
+// any previous in-process webhook subscriber with the backend's.
+func TestWireServeServices_RoutesFiredWebhooksToBackend(t *testing.T) {
+	is := is.New(t)
+	ctx, _ := newServiceContext(t, false)
+	t.Cleanup(webhook.ClearFiredEventHandler)
+
+	sentinelCalled := false
+	webhook.SetFiredEventHandler(func(context.Context, webhook.EventPayload) { sentinelCalled = true })
+
+	is.NoErr(WireServeServices(ctx))
+	is.NoErr(webhook.SendEvent(ctx, webhook.Common{EventType: webhook.EventRepository}))
+
+	is.True(!sentinelCalled) // serve's handler must replace the previous one
 }

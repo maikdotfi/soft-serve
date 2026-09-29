@@ -16,9 +16,7 @@ import (
 	"github.com/charmbracelet/soft-serve/cmd"
 	"github.com/charmbracelet/soft-serve/pkg/backend"
 	"github.com/charmbracelet/soft-serve/pkg/config"
-	"github.com/charmbracelet/soft-serve/pkg/db"
 	"github.com/charmbracelet/soft-serve/pkg/hooks"
-	"github.com/charmbracelet/soft-serve/pkg/store"
 	"github.com/spf13/cobra"
 )
 
@@ -42,18 +40,7 @@ var (
 				return ErrInternalServerError
 			}
 
-			// The hook subprocess wires the CI service so pre-receive
-			// workflow validation has access to it. Backup is not wired
-			// here — backup is schedule-only and runs in the
-			// long-running serve process.
-			ctx := c.Context()
-			if err := cmd.WireOptionalServices(
-				ctx,
-				config.FromContext(ctx),
-				backend.FromContext(ctx),
-				db.FromContext(ctx),
-				store.FromContext(ctx),
-			); err != nil {
+			if err := cmd.WireHookServices(c.Context()); err != nil { // fork
 				logger.Error("failed to wire optional services", "err", err)
 				return ErrInternalServerError
 			}

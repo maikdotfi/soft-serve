@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 
 	"charm.land/log/v2"
 	"github.com/charmbracelet/soft-serve/pkg/backend"
@@ -20,7 +21,36 @@ import (
 	"github.com/charmbracelet/soft-serve/pkg/config"
 	"github.com/charmbracelet/soft-serve/pkg/db"
 	"github.com/charmbracelet/soft-serve/pkg/store"
+	"github.com/charmbracelet/soft-serve/pkg/webhook"
 )
+
+// WireServeServices wires every fork service the long-running `soft serve`
+// process needs, reading its dependencies from ctx. It is the single call
+// cmd/soft/serve makes into fork code.
+func WireServeServices(ctx context.Context) error {
+	cfg, be, dbx, st := config.FromContext(ctx), backend.FromContext(ctx), db.FromContext(ctx), store.FromContext(ctx)
+	if err := WireOptionalServices(ctx, cfg, be, dbx, st); err != nil {
+		return fmt.Errorf("wire optional services: %w", err)
+	}
+	WireBackupService(ctx, cfg, be, dbx, st)
+
+	// Serve-process-only side effects: the periodic backup schedule and
+	// the in-process webhook fan-out. Both rely on the long-running process.
+	if svc := be.BackupService(); svc != nil {
+		if err := svc.LogScheduleReady(ctx); err != nil {
+			log.FromContext(ctx).WithPrefix("backup").Error("failed to prepare backup schedule", "err", err)
+		}
+	}
+	webhook.SetFiredEventHandler(be.OnWebhookFired)
+	return nil
+}
+
+// WireHookServices wires the fork services the short-lived `soft hook *`
+// subprocess needs, reading its dependencies from ctx. It is the single
+// call cmd/soft/hook makes into fork code before dispatching a hook.
+func WireHookServices(ctx context.Context) error {
+	return WireOptionalServices(ctx, config.FromContext(ctx), backend.FromContext(ctx), db.FromContext(ctx), store.FromContext(ctx))
+}
 
 // WireOptionalServices attaches the CI service to the Backend. It is
 // called by every composition root that constructs a Backend and
