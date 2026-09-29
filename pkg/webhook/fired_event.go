@@ -37,6 +37,11 @@ func ClearFiredEventHandler() {
 // dispatchFiredEvent invokes the registered handler, if any, with
 // the given payload. Panics from the handler are recovered and
 // dropped; this function must be safe to call from SendEvent.
+//
+// SendEvent defers this call so subscribers fire independently of
+// whether external webhook delivery succeeded — the event has happened
+// either way and downstream rules (e.g. the CI service's
+// CreateRunsOnEvent) should still fire.
 func dispatchFiredEvent(ctx context.Context, payload EventPayload) {
 	hp := firedEventHandler.Load()
 	if hp == nil || *hp == nil {
@@ -46,4 +51,11 @@ func dispatchFiredEvent(ctx context.Context, payload EventPayload) {
 		_ = recover()
 	}()
 	(*hp)(ctx, payload)
+}
+
+// RepositoryName returns the repository name. Implements EventPayload.
+// In-process subscribers (e.g. the CI service) key off the repo name
+// rather than its surrogate ID.
+func (c Common) RepositoryName() string {
+	return c.Repository.Name
 }

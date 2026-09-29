@@ -128,13 +128,9 @@ func SendWebhook(ctx context.Context, w models.Webhook, event Event, payload int
 	return db.WrapError(datastore.CreateWebhookDelivery(ctx, dbx, id, w.ID, int(event), w.URL, http.MethodPost, reqErr, reqHeaders, reqBody, resStatus, resHeaders, resBody))
 }
 
-// SendEvent sends a webhook event. The event is also delivered to
-// any in-process subscriber registered via SetFiredEventHandler,
-// independently of whether external webhook delivery succeeded —
-// the event has happened either way and downstream rules (e.g. the
-// CI service's CreateRunsOnEvent) should still fire.
+// SendEvent sends a webhook event.
 func SendEvent(ctx context.Context, payload EventPayload) error {
-	defer dispatchFiredEvent(ctx, payload)
+	defer dispatchFiredEvent(ctx, payload) // fork: see fired_event.go
 
 	dbx := db.FromContext(ctx)
 	datastore := store.FromContext(ctx)

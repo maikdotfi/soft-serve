@@ -18,14 +18,8 @@ func NewRouter(ctx context.Context) http.Handler {
 	// Health routes
 	HealthController(ctx, router)
 
-	// CI HTTP surfaces (RunnerDispatchAdapter and RunQueryAPI from
-	// ci.allium). Mounted before the Git and Web UI routes so their
-	// /api/v1/ci/... prefix can never be shadowed by repository
-	// path matching.
-	CIController(ctx, router)
-
-	// Read-only HTML browser at /ui
-	WebUIController(ctx, router)
+	CIController(ctx, router)    // fork: must precede GitController
+	WebUIController(ctx, router) // fork
 
 	// Git routes
 	GitController(ctx, router)

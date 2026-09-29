@@ -36,6 +36,9 @@ import (
 // is not (or has not yet been) wired on the backend, the routes are
 // still registered but each will respond with 503 Service
 // Unavailable, matching the existing /readyz pattern.
+//
+// NewRouter must call this before GitController so the /api/v1/ci/...
+// prefix can never be shadowed by repository path matching.
 func CIController(_ context.Context, r *mux.Router) {
 	api := r.PathPrefix("/api/v1/ci").Subrouter()
 

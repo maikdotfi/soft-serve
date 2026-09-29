@@ -11,9 +11,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/soft-serve/cmd/soft/admin"
 	"github.com/charmbracelet/soft-serve/cmd/soft/browse"
-	cicmd "github.com/charmbracelet/soft-serve/cmd/soft/ci"
 	"github.com/charmbracelet/soft-serve/cmd/soft/hook"
-	"github.com/charmbracelet/soft-serve/cmd/soft/restore"
 	"github.com/charmbracelet/soft-serve/cmd/soft/serve"
 	"github.com/charmbracelet/soft-serve/pkg/config"
 	logr "github.com/charmbracelet/soft-serve/pkg/log"
@@ -78,9 +76,8 @@ func init() {
 		hook.Command,
 		admin.Command,
 		browse.Command,
-		restore.Command,
-		cicmd.Command,
 	)
+	rootCmd.AddCommand(forkCommands...) // fork
 	rootCmd.CompletionOptions.HiddenDefaultCmd = true
 
 	if len(CommitSHA) >= 7 {

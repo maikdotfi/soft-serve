@@ -8,9 +8,7 @@ type EventPayload interface {
 	Event() Event
 	// RepositoryID returns the repository ID.
 	RepositoryID() int64
-	// RepositoryName returns the repository name. Used by
-	// downstream subscribers (e.g. the CI service) that key off the
-	// repo name rather than its surrogate ID.
+	// RepositoryName returns the repository name (fork: see fired_event.go).
 	RepositoryName() string
 }
 
@@ -34,12 +32,6 @@ func (c Common) Event() Event {
 // Implements EventPayload.
 func (c Common) RepositoryID() int64 {
 	return c.Repository.ID
-}
-
-// RepositoryName returns the repository name.
-// Implements EventPayload.
-func (c Common) RepositoryName() string {
-	return c.Repository.Name
 }
 
 // User represents a user in an event.
