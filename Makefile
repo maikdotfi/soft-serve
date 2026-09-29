@@ -52,6 +52,7 @@ help:
 	@echo "  uninstall-systemd Stop, disable, and remove the systemd unit (run as root)"
 	@echo "  deploy            Cross-compile for Linux, scp to DEPLOY_HOST, and restart soft-serve.service"
 	@echo "                    (requires DEPLOY_HOST=..., optional DEPLOY_USER=..., DEPLOY_BIN=...)"
+	@echo "  upstream-status   Fetch upstream and report divergence, new migrations, and fork footprint"
 
 .PHONY: test
 test:
@@ -257,3 +258,7 @@ uninstall-systemd:
 	@systemctl daemon-reload
 	@echo "soft-serve.service removed."
 	@echo "Data in $(SOFT_SERVE_HOME), the $(SOFT_SERVE_USER) user, and /etc/soft-serve.conf were left in place."
+
+.PHONY: upstream-status
+upstream-status:
+	@scripts/upstream-status.sh

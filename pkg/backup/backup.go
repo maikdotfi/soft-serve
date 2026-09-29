@@ -1,5 +1,5 @@
 // Package backup implements the S3 backup and restore domain for Soft Serve.
-// The spec is defined in backup.allium at the repository root.
+// The spec is defined in docs/fork/backup.allium.
 //
 // Architecture follows AGENTS.md: domain types and port interfaces live here;
 // adapters (S3, database, filesystem) live in pkg/backup/adapters/.

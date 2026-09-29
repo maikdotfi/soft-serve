@@ -91,6 +91,17 @@ Treat these as external services too. If you need `time.Now`, inject a `Clock` i
 
 ---
 
+## Fork maintenance
+
+This is a fork of charmbracelet/soft-serve that is rebased onto upstream regularly. Read `FORK.md` before changing anything outside the fork-owned paths it lists.
+
+- Put new fork logic in fork-owned files or packages. In an upstream-owned file, add at most a one-line hook marked `// fork`.
+- Fork DB migrations go in `pkg/db/migrate/fork.go` (`fork_migrations` table), never in upstream's `migrations` list.
+- Leave `.github/`, `README.md`, and other upstream-only files identical to upstream.
+- Check the footprint with `make upstream-status`.
+
+---
+
 ## When the user asks for something that violates these rules
 
 - Asked to skip tests? Write the test first; if they push back, ask why and record the answer.
