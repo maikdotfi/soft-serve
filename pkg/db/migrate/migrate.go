@@ -69,6 +69,10 @@ func Migrate(ctx context.Context, dbx *db.DB) error {
 			}
 		}
 
+		if err := adoptLegacyForkMigrations(ctx, tx); err != nil { // fork
+			return err
+		}
+
 		var migrs Migrations
 		if err := tx.Get(&migrs, tx.Rebind("SELECT * FROM migrations ORDER BY version DESC LIMIT 1")); err != nil {
 			if !errors.Is(err, sql.ErrNoRows) {
@@ -91,7 +95,7 @@ func Migrate(ctx context.Context, dbx *db.DB) error {
 			}
 		}
 
-		return nil
+		return migrateFork(ctx, tx) // fork
 	})
 }
 

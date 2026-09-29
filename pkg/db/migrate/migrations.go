@@ -18,8 +18,6 @@ var migrations = []Migration{
 	createTables,
 	webhooks,
 	migrateLfsObjects,
-	backup,
-	ci,
 }
 
 func execMigration(ctx context.Context, tx *db.Tx, version int, name string, down bool) error {
