@@ -1,0 +1,12 @@
+# vi: set ft=conf
+
+# ACME enabled without domains refuses to start
+env SOFT_SERVE_HTTP_ACME_ENABLED=true
+! exec soft serve
+stderr 'configure acme: acme: no domains configured'
+
+# a domain that cannot be validated over TLS-ALPN-01 refuses to start
+env SOFT_SERVE_HTTP_ACME_DOMAINS=*.example.com
+! exec soft serve
+stderr 'acme: invalid domain: "\*.example.com"'
+

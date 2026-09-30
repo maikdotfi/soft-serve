@@ -6,6 +6,7 @@ It adds:
 - **S3 backup and restore**: scheduled repo bundles and server snapshots, plus `soft restore` ([docs](docs/fork/BACKUP.md), [spec](docs/fork/backup.allium)).
 - **CI**: workflow validation on push, runs, a runner dispatch API and `soft ci` ([docs](docs/fork/CI.md), [spec](docs/fork/ci.allium)).
 - **Web UI**: a read-only HTML browser at `/ui`, including backup status. It is admin-only: HTTP Basic auth with an admin's username and one of their access tokens (`soft token create ui`) as the password.
+- **Automatic TLS**: Let's Encrypt certificates for the HTTP server via TLS-ALPN-01 ([docs](docs/fork/ACME.md)).
 - **Deploy tooling**: the `Makefile`, `deploy/`, and a local Garage daemon for S3 integration tests.
 
 The fork is rebased onto upstream regularly. Everything below exists to keep that cheap.
@@ -16,10 +17,10 @@ Fork logic lives in files and packages upstream doesn't have, so upstream never 
 
 | Area | Fork-owned paths |
 | --- | --- |
-| Domain + adapters | `pkg/backup/`, `pkg/ci/`, `pkg/webui/` |
-| Composition root | `cmd/services.go`, `cmd/soft/fork.go`, `cmd/soft/ci/`, `cmd/soft/restore/` |
-| Glue inside upstream packages | `pkg/backend/fork.go`, `pkg/backend/ci.go`, `pkg/config/backup.go`, `pkg/db/migrate/fork*.go`, `pkg/store/backup.go`, `pkg/store/database/backup.go`, `pkg/web/ci.go`, `pkg/web/webui.go`, `pkg/webhook/fired_event.go` |
-| Tests | the above, plus `testscript/fork_test.go` and `testscript/testdata/backup-schedule.txtar`, `testscript/testdata/webui-auth.txtar` |
+| Domain + adapters | `pkg/acme/`, `pkg/backup/`, `pkg/ci/`, `pkg/webui/` |
+| Composition root | `cmd/acme.go`, `cmd/services.go`, `cmd/soft/fork.go`, `cmd/soft/ci/`, `cmd/soft/restore/` |
+| Glue inside upstream packages | `pkg/backend/fork.go`, `pkg/backend/ci.go`, `pkg/config/acme.go`, `pkg/config/backup.go`, `pkg/db/migrate/fork*.go`, `pkg/store/backup.go`, `pkg/store/database/backup.go`, `pkg/web/ci.go`, `pkg/web/webui.go`, `pkg/webhook/fired_event.go` |
+| Tests | the above, plus `cmd/soft/serve/acme_test.go`, `testscript/fork_test.go`, `testscript/testdata/acme-config.txtar`, `testscript/testdata/backup-schedule.txtar`, `testscript/testdata/webui-auth.txtar` |
 | Docs | `FORK.md`, `docs/fork/`, `AGENTS.md` |
 
 ## Touching upstream files

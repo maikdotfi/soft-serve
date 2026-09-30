@@ -10,6 +10,7 @@ import (
 	"charm.land/log/v2"
 
 	"charm.land/ssh"
+	"github.com/charmbracelet/soft-serve/cmd"
 	"github.com/charmbracelet/soft-serve/pkg/access"
 	"github.com/charmbracelet/soft-serve/pkg/backend"
 	"github.com/charmbracelet/soft-serve/pkg/config"
@@ -103,6 +104,10 @@ func NewServer(ctx context.Context) (*Server, error) {
 		srv.HTTPServer.SetTLSConfig(&tls.Config{
 			GetCertificate: srv.CertLoader.GetCertificateFunc(),
 		})
+	}
+
+	if err := cmd.WireACME(ctx, srv.HTTPServer); err != nil { // fork
+		return nil, fmt.Errorf("configure acme: %w", err)
 	}
 
 	warnIfAnonAdminAccess(ctx, be, logger)

@@ -26,6 +26,8 @@ ProtectKernelModules=true
 ProtectControlGroups=true
 ReadWritePaths=/var/lib/soft-serve
 LimitNOFILE=65536
+# Uncomment to let soft-serve bind :443 for automatic TLS (docs/fork/ACME.md).
+#AmbientCapabilities=CAP_NET_BIND_SERVICE
 
 [Install]
 WantedBy=multi-user.target

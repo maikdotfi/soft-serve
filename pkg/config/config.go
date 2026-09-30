@@ -90,6 +90,8 @@ type HTTPConfig struct {
 
 	// CORS is the cross-origin configuration for the HTTP server.
 	CORS CORSConfig `envPrefix:"CORS_" yaml:"cors"`
+
+	ACME ACMEConfig `envPrefix:"ACME_" yaml:"acme"` // fork
 }
 
 // StatsConfig is the configuration for the stats server.
