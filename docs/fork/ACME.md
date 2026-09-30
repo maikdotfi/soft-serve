@@ -35,6 +35,16 @@ The first certificate is obtained on the first TLS connection for the hostname a
 
 ACME can't be combined with `tls_cert_path`/`tls_key_path`. Wildcards and IP addresses are rejected because TLS-ALPN-01 can't validate them. Point `ca_url` at the Let's Encrypt staging directory while testing, so you don't hit production rate limits.
 
+## Troubleshooting
+
+The first certificate is only requested when a client connects with the hostname, so open `https://<your domain>` once, then look for `acme:` lines in the log (`journalctl -u soft-serve`):
+
+- `certificate unavailable host=… err=…`: the CA's reason, e.g. a failed challenge, a DNS problem or a rate limit.
+- `answering TLS-ALPN-01 challenge`: the CA reached the server on port 443. If issuance fails and this line never appears, the CA can't reach you: check DNS, port 443 forwarding, and that no proxy (e.g. Cloudflare's orange cloud) terminates TLS in front of soft-serve.
+- `certificate stored`: a new or renewed certificate was written to the cache.
+
+Clients without SNI or asking for other hostnames are not logged.
+
 ## systemd
 
 To bind `:443` as the unprivileged `soft-serve` user, uncomment `AmbientCapabilities=CAP_NET_BIND_SERVICE` in `deploy/soft-serve.service`. `deploy/soft-serve.conf` has a commented example.

@@ -30,17 +30,17 @@ func WireACME(ctx context.Context, srv interface{ SetTLSConfig(*tls.Config) }) e
 		return ErrACMEWithStaticTLS
 	}
 
+	logger := log.FromContext(ctx).WithPrefix("acme")
 	iss, err := autocert.New(acme.Config{
 		Domains: ac.Domains,
 		Email:   ac.Email,
 		CAURL:   ac.CAURL,
-	}, dircache.New(ac.CacheDir(cfg.DataPath)))
+	}, dircache.New(ac.CacheDir(cfg.DataPath)), logger)
 	if err != nil {
 		return err
 	}
 	srv.SetTLSConfig(iss.TLSConfig())
 
-	logger := log.FromContext(ctx).WithPrefix("acme")
 	logger.Info("automatic TLS enabled", "domains", ac.Domains, "cache", ac.CacheDir(cfg.DataPath))
 	if !strings.HasPrefix(cfg.HTTP.PublicURL, "https://") {
 		logger.Warn("http.public_url is not https; clone URLs will be wrong", "public_url", cfg.HTTP.PublicURL)
