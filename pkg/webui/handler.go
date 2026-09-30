@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/soft-serve/pkg/webui/adminauth"
 	"github.com/charmbracelet/soft-serve/pkg/webui/backupbrowser"
 	"github.com/charmbracelet/soft-serve/pkg/webui/repobrowser"
 	"github.com/gorilla/mux"
@@ -20,6 +21,7 @@ import (
 type Handler struct {
 	browser      repobrowser.Browser
 	backups      backupbrowser.Reader
+	auth         adminauth.Authenticator
 	basePath     string
 	maxBlobBytes int64
 	tmpls        map[string]*pageTemplate

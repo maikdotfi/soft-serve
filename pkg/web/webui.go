@@ -10,12 +10,14 @@ import (
 	"github.com/charmbracelet/soft-serve/pkg/db"
 	"github.com/charmbracelet/soft-serve/pkg/store"
 	"github.com/charmbracelet/soft-serve/pkg/webui"
+	adminauthadapter "github.com/charmbracelet/soft-serve/pkg/webui/adminauth/softserveadapter"
 	webuibackupstore "github.com/charmbracelet/soft-serve/pkg/webui/backupbrowser/storeadapter"
 	"github.com/charmbracelet/soft-serve/pkg/webui/repobrowser/softserveadapter"
 	"github.com/gorilla/mux"
 )
 
-// WebUIController mounts the read-only HTML browser at /ui.
+// WebUIController mounts the read-only HTML browser at /ui, gated by HTTP
+// Basic auth: an admin's username plus one of their access tokens.
 //
 // The UI is intentionally separate from the rest of the HTTP server: the
 // only seam is the repobrowser.Browser port, constructed here from the
@@ -28,7 +30,10 @@ func WebUIController(ctx context.Context, r *mux.Router) {
 	}
 
 	browser := softserveadapter.New(be)
-	opts := []webui.Option{webui.WithBasePath("/ui")}
+	opts := []webui.Option{
+		webui.WithBasePath("/ui"),
+		webui.WithAuthenticator(adminauthadapter.New(be)),
+	}
 	if dbx, datastore := db.FromContext(ctx), store.FromContext(ctx); dbx != nil && datastore != nil {
 		backupStore := backupstoreadapter.NewStoreAdapter(dbx, datastore)
 		opts = append(opts, webui.WithBackupReader(webuibackupstore.New(backupStore)))

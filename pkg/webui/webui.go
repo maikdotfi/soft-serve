@@ -17,6 +17,7 @@ import (
 	"io/fs"
 	"net/http"
 
+	"github.com/charmbracelet/soft-serve/pkg/webui/adminauth"
 	"github.com/charmbracelet/soft-serve/pkg/webui/backupbrowser"
 	"github.com/charmbracelet/soft-serve/pkg/webui/repobrowser"
 )
@@ -44,6 +45,12 @@ func MaxBlobBytes(n int64) Option {
 // WithBackupReader enables the read-only backup status page.
 func WithBackupReader(r backupbrowser.Reader) Option {
 	return func(h *Handler) { h.backups = r }
+}
+
+// WithAuthenticator requires HTTP Basic auth from an admin on every request,
+// including static assets.
+func WithAuthenticator(a adminauth.Authenticator) Option {
+	return func(h *Handler) { h.auth = a }
 }
 
 // NewHandler returns an http.Handler serving the read-only browser.
@@ -76,5 +83,8 @@ func NewHandler(b repobrowser.Browser, opts ...Option) (http.Handler, error) {
 	}
 	h.staticFS = staticSub
 
+	if h.auth != nil {
+		return requireAdmin(h.auth, h.routes()), nil
+	}
 	return h.routes(), nil
 }

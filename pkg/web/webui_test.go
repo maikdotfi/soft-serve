@@ -41,6 +41,7 @@ func TestWebUIController_MountsBackupStatusFromStore(t *testing.T) {
 	wrapped := withRequestContext(ctx, router)
 
 	req := httptest.NewRequest(http.MethodGet, "/ui/backups", nil)
+	req.SetBasicAuth("admin", newAdminToken(t, ctx, be))
 	rec := httptest.NewRecorder()
 	wrapped.ServeHTTP(rec, req)
 	body := rec.Body.String()
@@ -53,6 +54,54 @@ func TestWebUIController_MountsBackupStatusFromStore(t *testing.T) {
 			t.Fatalf("body missing %q:\n%s", want, body)
 		}
 	}
+}
+
+func TestWebUIController_RequiresAdminBasicAuth(t *testing.T) {
+	ctx, dbx, dbstore := newWebUITestContext(t)
+	be := backend.New(ctx, config.FromContext(ctx), dbx, dbstore)
+	ctx = backend.WithContext(ctx, be)
+	token := newAdminToken(t, ctx, be)
+
+	router := mux.NewRouter()
+	WebUIController(ctx, router)
+	wrapped := withRequestContext(ctx, router)
+
+	tests := []struct {
+		name       string
+		username   string
+		password   string
+		wantStatus int
+	}{
+		{"anonymous", "", "", http.StatusUnauthorized},
+		{"wrong token", "admin", "nope", http.StatusUnauthorized},
+		{"admin token", "admin", token, http.StatusOK},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/ui/", nil)
+			if tt.username != "" {
+				req.SetBasicAuth(tt.username, tt.password)
+			}
+			rec := httptest.NewRecorder()
+			wrapped.ServeHTTP(rec, req)
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", rec.Code, tt.wantStatus)
+			}
+		})
+	}
+}
+
+func newAdminToken(t *testing.T, ctx context.Context, be *backend.Backend) string {
+	t.Helper()
+	admin, err := be.User(ctx, "admin")
+	if err != nil {
+		t.Fatalf("User(admin): %v", err)
+	}
+	token, err := be.CreateAccessToken(ctx, admin, "ui", time.Time{})
+	if err != nil {
+		t.Fatalf("CreateAccessToken: %v", err)
+	}
+	return token
 }
 
 func newWebUITestContext(t *testing.T) (context.Context, *db.DB, store.Store) {

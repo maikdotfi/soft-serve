@@ -1,0 +1,46 @@
+# vi: set ft=conf
+
+# FIXME: don't skip windows
+[windows] skip 'curl makes github actions hang'
+
+# start soft serve
+exec soft serve &
+# wait for SSH server to start
+ensureserverrunning SSH_PORT
+
+# create a non-admin user
+soft user create user1 --key "$USER1_AUTHORIZED_KEY"
+
+# admin and user access tokens
+soft token create 'ui'
+cp stdout tokenfile
+envfile TOKEN=tokenfile
+usoft token create 'ui'
+cp stdout utokenfile
+envfile UTOKEN=utokenfile
+
+# anonymous is challenged
+curl -v http://localhost:$HTTP_PORT/ui/
+stderr '> 401 Unauthorized'
+stderr '> Www-Authenticate: Basic realm="Soft Serve"'
+
+# wrong token is challenged
+curl -v http://admin:nope@localhost:$HTTP_PORT/ui/
+stderr '> 401 Unauthorized'
+
+# admin token for another username is challenged
+curl -v http://user1:$TOKEN@localhost:$HTTP_PORT/ui/
+stderr '> 401 Unauthorized'
+
+# non-admin is forbidden
+curl -v http://user1:$UTOKEN@localhost:$HTTP_PORT/ui/
+stderr '> 403 Forbidden'
+
+# admin gets the UI
+curl -v http://admin:$TOKEN@localhost:$HTTP_PORT/ui/
+stderr '> 200 OK'
+stdout 'Repositories'
+
+# stop the server
+[windows] stopserver
+[windows] ! stderr .
